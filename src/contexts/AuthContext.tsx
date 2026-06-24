@@ -68,6 +68,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     users.push(newUser);
     localStorage.setItem(USERS_KEY, JSON.stringify(users));
+
+    // Gửi thông báo lên server → lưu DB + gửi email Excel
+    fetch("/api/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, email, plan: "Creator" }),
+    }).catch(() => {
+      // Không block đăng ký nếu API lỗi
+    });
     const { password: _, ...userData } = newUser;
     setUser(userData);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(userData));
