@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --orange: #FF6B00;
+  --orange-hover: #E55A00;
+  --bg: #0A0A0F;
+  --bg2: #111118;
+  --card: #16161F;
+  --border: #2A2A3A;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: #0A0A0F;
+  color: #fff;
+  font-family: 'Be Vietnam Pro', 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* Orange glow utilities */
+.orange-glow {
+  background: radial-gradient(ellipse at center, rgba(255,107,0,0.15) 0%, transparent 70%);
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, #FF6B00, #FF8C3A);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #0A0A0F; }
+::-webkit-scrollbar-thumb { background: #2A2A3A; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #FF6B00; }
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid #FF6B00;
+  outline-offset: 2px;
+}
