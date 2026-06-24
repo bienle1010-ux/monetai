@@ -25,6 +25,9 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const STORAGE_KEY = "monetai_user";
 const USERS_KEY = "monetai_users";
+const ADMIN_EMAIL = "monetai.vn@gmail.com";
+// credits === -1 means unlimited (admin)
+export const UNLIMITED_CREDITS = -1;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -64,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       plan: "creator",
       joinedAt: new Date().toISOString(),
-      credits: 500,
+      credits: email === ADMIN_EMAIL ? UNLIMITED_CREDITS : 5,
     };
     users.push(newUser);
     localStorage.setItem(USERS_KEY, JSON.stringify(users));
