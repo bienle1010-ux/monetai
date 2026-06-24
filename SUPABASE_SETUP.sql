@@ -53,6 +53,24 @@ VALUES
   ('Runway ML',     'Runway',     'AI tạo và chỉnh sửa video',           'AI Video',    '25%', '15 USD/tháng', '#', 4.6, true,  8)
 ON CONFLICT DO NOTHING;
 
+-- ── Bảng giao dịch thanh toán (Casso webhook) ─────────────────────────────
+CREATE TABLE IF NOT EXISTS payments (
+  id          BIGSERIAL PRIMARY KEY,
+  email       TEXT        NOT NULL,
+  amount      INTEGER     NOT NULL,   -- VNĐ
+  credits     INTEGER     NOT NULL,   -- credits được cộng
+  tid         TEXT        UNIQUE,     -- transaction ID từ ngân hàng
+  description TEXT,                   -- nội dung chuyển khoản
+  status      TEXT        NOT NULL DEFAULT 'confirmed',
+  paid_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payments_email    ON payments (email);
+CREATE INDEX IF NOT EXISTS idx_payments_paid_at  ON payments (paid_at DESC);
+
+ALTER TABLE payments DISABLE ROW LEVEL SECURITY;
+
 -- ── Trigger tự cập nhật updated_at ─────────────────────────────────────────
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
