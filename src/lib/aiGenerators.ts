@@ -112,7 +112,7 @@ async function callGemini(prompt: string): Promise<string> {
   const key = process.env.GOOGLE_AI_API_KEY;
   if (!key) throw new Error("No GOOGLE_AI_API_KEY");
   const genAI = new GoogleGenerativeAI(key);
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
   const result = await model.generateContent(prompt);
   return result.response.text();
 }
