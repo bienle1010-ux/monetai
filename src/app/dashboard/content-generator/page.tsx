@@ -421,22 +421,6 @@ export default function ContentGeneratorPage() {
                         → Nhấn <span className="text-[#10A37F] font-semibold">&quot;Tạo nội dung với ChatGPT&quot;</span>
                       </p>
                     </div>
-                    <div className="bg-[#0A0A0F] rounded-xl p-4 text-left max-w-sm w-full space-y-2">
-                      <p className="text-[#A0A0B0] text-xs font-semibold uppercase tracking-wide">Cách hoạt động:</p>
-                      {[
-                        "Hệ thống tạo prompt chuyên nghiệp từ thông tin bạn nhập",
-                        "Tự động copy & mở ChatGPT (miễn phí)",
-                        "Dán prompt → ChatGPT tạo nội dung trong vài giây",
-                        "Copy kết quả về dùng ngay để kiếm tiền",
-                      ].map((t, i) => (
-                        <div key={i} className="flex items-start gap-2">
-                          <div className="w-4 h-4 rounded-full bg-[#10A37F]/20 flex items-center justify-center shrink-0 mt-0.5">
-                            <span className="text-[#10A37F] text-[9px] font-bold">{i + 1}</span>
-                          </div>
-                          <span className="text-[#A0A0B0] text-xs">{t}</span>
-                        </div>
-                      ))}
-                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>
