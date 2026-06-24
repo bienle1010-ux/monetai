@@ -34,5 +34,15 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 
+# Legacy static files (not part of Next.js app)
+index.html
+WEB TEST 1/
+WEB TEST 2/
+Website_Sample_Backup.zip
+anh web mau 1.jpg
+final_*.png
+ss_*.png
+take_*.js
+
 # Claude internal
 .claude/
