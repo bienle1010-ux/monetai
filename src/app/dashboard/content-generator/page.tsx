@@ -7,9 +7,7 @@ import {
   Smartphone, Globe, Zap, ChevronRight,
 } from "lucide-react";
 import Link from "next/link";
-import { useAuth, UNLIMITED_CREDITS } from "@/contexts/AuthContext";
-
-const ADMIN_EMAIL = "monetai.vn@gmail.com";
+import { useAuth, UNLIMITED_CREDITS, ADMIN_EMAIL } from "@/contexts/AuthContext";
 
 const contentTypes = [
   { id: "facebook", label: "Bài Facebook",      icon: Facebook,   color: "#1877F2", placeholder: "VD: Khóa học kiếm tiền online với AI" },

@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CreditCard, Check, Zap, QrCode, Copy, CheckCircle2, RefreshCw, X } from "lucide-react";
-import { useAuth, UNLIMITED_CREDITS } from "@/contexts/AuthContext";
+import {
+  CreditCard, Check, Zap, QrCode, Copy, CheckCircle2,
+  RefreshCw, X, Clock, ArrowDownCircle, ChevronDown, ChevronUp,
+} from "lucide-react";
+import { useAuth, UNLIMITED_CREDITS, ADMIN_EMAIL } from "@/contexts/AuthContext";
 import { plans } from "@/data/pricing";
 
-const ADMIN_EMAIL = "monetai.vn@gmail.com";
 const MB_ACCOUNT  = "0971166299";
 const MB_NAME     = "LE VAN BIEN";
 const BANK_ID     = "MB";
+const POLL_MS     = 8_000; // poll every 8s while QR is open
 
 const CREDIT_PACKAGES = [
   { credits: 10,  price: 10_000  },
@@ -19,26 +22,100 @@ const CREDIT_PACKAGES = [
   { credits: 500, price: 500_000, badge: "TIẾT KIỆM" },
 ];
 
+interface Payment {
+  id: number;
+  amount: number;
+  credits: number;
+  description: string;
+  paid_at: string;
+  tid: string;
+}
+
 function vietqrUrl(amount: number, email: string) {
   const info = encodeURIComponent(`MN ${email}`);
   const name = encodeURIComponent(MB_NAME);
   return `https://img.vietqr.io/image/${BANK_ID}-${MB_ACCOUNT}-compact2.png?amount=${amount}&addInfo=${info}&accountName=${name}`;
 }
 
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleString("vi-VN", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
 export default function BillingPage() {
   const { user, updateUser } = useAuth();
-  const [selected, setSelected]   = useState<typeof CREDIT_PACKAGES[0] | null>(null);
-  const [qrOpen, setQrOpen]       = useState(false);
-  const [copied, setCopied]       = useState<string | null>(null);
-  const [syncing, setSyncing]     = useState(false);
-  const [syncMsg, setSyncMsg]     = useState("");
+  const [selected, setSelected]       = useState<typeof CREDIT_PACKAGES[0] | null>(null);
+  const [qrOpen, setQrOpen]           = useState(false);
+  const [paySuccess, setPaySuccess]   = useState(false);
+  const [newCredits, setNewCredits]   = useState(0);
+  const [copied, setCopied]           = useState<string | null>(null);
+  const [syncing, setSyncing]         = useState(false);
+  const [syncMsg, setSyncMsg]         = useState("");
+  const [payments, setPayments]       = useState<Payment[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const pollRef       = useRef<ReturnType<typeof setInterval> | null>(null);
+  const baseCreditsRef = useRef<number>(0);
 
   const isAdmin     = user?.email === ADMIN_EMAIL;
   const isUnlimited = isAdmin || user?.credits === UNLIMITED_CREDITS;
   const credits     = user?.credits ?? 0;
 
+  // ── Auto-sync on mount ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (user?.email && !isUnlimited) {
+      fetch(`/api/payment/status?email=${encodeURIComponent(user.email)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.credits > (user.credits ?? 0)) updateUser({ credits: data.credits });
+        })
+        .catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email]);
+
+  // ── Polling while QR modal is open ──────────────────────────────────────
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  const startPoll = useCallback(() => {
+    if (!user?.email || isUnlimited) return;
+    baseCreditsRef.current = user.credits ?? 0;
+    pollRef.current = setInterval(async () => {
+      try {
+        const res  = await fetch(`/api/payment/status?email=${encodeURIComponent(user.email!)}`);
+        const data = await res.json();
+        if (data.credits > baseCreditsRef.current) {
+          const gained = data.credits - baseCreditsRef.current;
+          updateUser({ credits: data.credits });
+          setNewCredits(gained);
+          setPaySuccess(true);
+          stopPoll();
+        }
+      } catch { /* ignore network error */ }
+    }, POLL_MS);
+  }, [user?.email, user?.credits, isUnlimited, updateUser, stopPoll]);
+
+  useEffect(() => {
+    if (qrOpen && !paySuccess) startPoll();
+    else stopPoll();
+    return stopPoll;
+  }, [qrOpen, paySuccess, startPoll, stopPoll]);
+
+  // ── Close QR modal ───────────────────────────────────────────────────────
+  const closeQr = () => {
+    setQrOpen(false);
+    setPaySuccess(false);
+    setNewCredits(0);
+    stopPoll();
+  };
+
   const handleSelectPackage = (pkg: typeof CREDIT_PACKAGES[0]) => {
     setSelected(pkg);
+    setPaySuccess(false);
     setQrOpen(true);
   };
 
@@ -48,17 +125,17 @@ export default function BillingPage() {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  // Sync credits from Casso payments (Supabase)
+  // ── Manual sync ──────────────────────────────────────────────────────────
   const handleSync = async () => {
     if (!user?.email || isUnlimited) return;
     setSyncing(true);
     setSyncMsg("");
     try {
-      const res = await fetch(`/api/payment/status?email=${encodeURIComponent(user.email)}`);
+      const res  = await fetch(`/api/payment/status?email=${encodeURIComponent(user.email)}`);
       const data = await res.json();
       if (data.credits > credits) {
         updateUser({ credits: data.credits });
-        setSyncMsg(`Cập nhật thành công! Credits: ${data.credits}`);
+        setSyncMsg(`✅ Cập nhật thành công! Credits: ${data.credits}`);
       } else {
         setSyncMsg("Chưa có thanh toán mới được ghi nhận.");
       }
@@ -70,23 +147,27 @@ export default function BillingPage() {
     }
   };
 
-  // Auto-sync credits on load
-  useEffect(() => {
-    if (user?.email && !isUnlimited) {
-      fetch(`/api/payment/status?email=${encodeURIComponent(user.email)}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.credits > (user.credits ?? 0)) {
-            updateUser({ credits: data.credits });
-          }
-        })
-        .catch(() => {});
-    }
-  }, [user?.email]);
+  // ── Load payment history ─────────────────────────────────────────────────
+  const loadHistory = async () => {
+    if (!user?.email || historyLoading) return;
+    setHistoryLoading(true);
+    try {
+      const res  = await fetch(`/api/payment/history?email=${encodeURIComponent(user.email)}`);
+      const data = await res.json();
+      setPayments(data.payments ?? []);
+    } catch { /* ignore */ }
+    setHistoryLoading(false);
+  };
+
+  const toggleHistory = () => {
+    const next = !historyOpen;
+    setHistoryOpen(next);
+    if (next && payments.length === 0) loadHistory();
+  };
 
   return (
     <div>
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
@@ -103,7 +184,6 @@ export default function BillingPage() {
               </p>
             </div>
           </div>
-
           {!isUnlimited && (
             <button
               onClick={handleSync}
@@ -115,10 +195,13 @@ export default function BillingPage() {
             </button>
           )}
         </div>
-
         {syncMsg && (
           <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
-            className={`mt-3 text-sm px-4 py-2.5 rounded-xl border ${syncMsg.includes("thành công") ? "bg-green-500/10 border-green-500/20 text-green-400" : "bg-yellow-500/10 border-yellow-500/20 text-yellow-400"}`}>
+            className={`mt-3 text-sm px-4 py-2.5 rounded-xl border ${
+              syncMsg.startsWith("✅")
+                ? "bg-green-500/10 border-green-500/20 text-green-400"
+                : "bg-yellow-500/10 border-yellow-500/20 text-yellow-400"
+            }`}>
             {syncMsg}
           </motion.div>
         )}
@@ -132,20 +215,17 @@ export default function BillingPage() {
         </div>
       ) : (
         <>
-          {/* Pricing info */}
+          {/* ── Pricing info ─────────────────────────────────────────────── */}
           <div className="flex items-center gap-2 mb-4">
             <Zap className="w-4 h-4 text-[#FF6B00]" />
             <span className="text-white text-sm font-semibold">1 credit = 1.000 ₫</span>
             <span className="text-[#A0A0B0] text-sm">— Chọn gói và quét mã QR để nạp</span>
           </div>
 
-          {/* Credit packages */}
+          {/* ── Credit packages ───────────────────────────────────────────── */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8">
             {CREDIT_PACKAGES.map((pkg, i) => (
-              <motion.button
-                key={i}
-                whileHover={{ y: -2 }}
-                whileTap={{ scale: 0.97 }}
+              <motion.button key={i} whileHover={{ y: -2 }} whileTap={{ scale: 0.97 }}
                 onClick={() => handleSelectPackage(pkg)}
                 className="relative bg-[#16161F] border border-[#2A2A3A] hover:border-[#FF6B00]/50 rounded-2xl p-4 text-center transition-all"
               >
@@ -165,7 +245,7 @@ export default function BillingPage() {
             ))}
           </div>
 
-          {/* Bank info */}
+          {/* ── Bank info ────────────────────────────────────────────────── */}
           <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-6 mb-8">
             <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-[#FF6B00]/15 flex items-center justify-center text-[#FF6B00] text-xs font-bold">i</span>
@@ -201,14 +281,94 @@ export default function BillingPage() {
                     {copied === "desc" ? <CheckCircle2 className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
                   </button>
                 </div>
-                <p className="text-[#A0A0B0] text-xs mt-2">Hệ thống tự động nhận dạng và cộng credits ngay sau khi thanh toán.</p>
+                <p className="text-[#A0A0B0] text-xs mt-2">
+                  Hệ thống tự động nhận dạng và cộng credits sau khi chuyển khoản thành công.
+                </p>
               </div>
             </div>
+          </div>
+
+          {/* ── Payment history ──────────────────────────────────────────── */}
+          <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl overflow-hidden mb-8">
+            <button
+              onClick={toggleHistory}
+              className="w-full flex items-center justify-between p-5 hover:bg-[#1A1A28] transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-[#FF6B00]" />
+                <span className="text-white font-semibold text-sm">Lịch sử nạp tiền</span>
+                {payments.length > 0 && (
+                  <span className="bg-[#FF6B00]/20 text-[#FF6B00] text-xs font-bold px-2 py-0.5 rounded-full">
+                    {payments.length}
+                  </span>
+                )}
+              </div>
+              {historyOpen
+                ? <ChevronUp className="w-4 h-4 text-[#A0A0B0]" />
+                : <ChevronDown className="w-4 h-4 text-[#A0A0B0]" />}
+            </button>
+
+            <AnimatePresence>
+              {historyOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                >
+                  <div className="border-t border-[#2A2A3A] px-5 pb-5">
+                    {historyLoading ? (
+                      <div className="py-8 text-center text-[#A0A0B0] text-sm flex items-center justify-center gap-2">
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        Đang tải...
+                      </div>
+                    ) : payments.length === 0 ? (
+                      <div className="py-8 text-center text-[#A0A0B0] text-sm">
+                        <ArrowDownCircle className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                        Chưa có giao dịch nào
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto mt-4">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-[#A0A0B0] text-xs uppercase tracking-wide">
+                              <th className="text-left pb-3 font-medium">Thời gian</th>
+                              <th className="text-right pb-3 font-medium">Số tiền</th>
+                              <th className="text-right pb-3 font-medium">Credits</th>
+                              <th className="text-left pb-3 font-medium pl-4">Nội dung</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#2A2A3A]">
+                            {payments.map((p) => (
+                              <tr key={p.id}>
+                                <td className="py-3 text-[#A0A0B0] whitespace-nowrap text-xs">{fmtDate(p.paid_at)}</td>
+                                <td className="py-3 text-right text-white font-medium whitespace-nowrap">
+                                  {p.amount.toLocaleString("vi-VN")} ₫
+                                </td>
+                                <td className="py-3 text-right">
+                                  <span className="bg-[#FF6B00]/15 text-[#FF6B00] text-xs font-bold px-2 py-0.5 rounded-full">
+                                    +{p.credits}
+                                  </span>
+                                </td>
+                                <td className="py-3 pl-4 text-[#A0A0B0] text-xs truncate max-w-[160px]">
+                                  {p.description}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </>
       )}
 
-      {/* Plans section */}
+      {/* ── Monthly plans ────────────────────────────────────────────────── */}
       <h2 className="text-white font-semibold mb-4">Gói đăng ký hàng tháng</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
         {plans.map((plan, i) => {
@@ -257,7 +417,13 @@ export default function BillingPage() {
                   }
                 }}
                 disabled={isCurrent}
-                className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-colors ${isCurrent ? "bg-green-500/20 text-green-400 cursor-not-allowed" : plan.popular ? "bg-[#FF6B00] hover:bg-[#E55A00] text-white" : "border border-[#FF6B00] text-[#FF6B00] hover:bg-[#FF6B00]/10"}`}
+                className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-colors ${
+                  isCurrent
+                    ? "bg-green-500/20 text-green-400 cursor-not-allowed"
+                    : plan.popular
+                    ? "bg-[#FF6B00] hover:bg-[#E55A00] text-white"
+                    : "border border-[#FF6B00] text-[#FF6B00] hover:bg-[#FF6B00]/10"
+                }`}
               >
                 {isCurrent ? "Gói hiện tại" : "Liên hệ đăng ký"}
               </button>
@@ -266,65 +432,125 @@ export default function BillingPage() {
         })}
       </div>
 
-      {/* QR Modal */}
+      {/* ── QR Payment Modal ─────────────────────────────────────────────── */}
       <AnimatePresence>
         {qrOpen && selected && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setQrOpen(false)} />
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeQr} />
+
             <motion.div initial={{ opacity: 0, scale: 0.95, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
-              className="relative bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-6 w-full max-w-sm shadow-2xl"
+              className="relative bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-6 w-full max-w-sm shadow-2xl overflow-y-auto max-h-[90vh]"
             >
-              <button onClick={() => setQrOpen(false)} className="absolute top-4 right-4 text-[#A0A0B0] hover:text-white transition-colors">
+              <button onClick={closeQr} className="absolute top-4 right-4 text-[#A0A0B0] hover:text-white transition-colors z-10">
                 <X className="w-5 h-5" />
               </button>
 
-              <div className="text-center mb-5">
-                <p className="text-white font-bold text-lg">Quét QR thanh toán</p>
-                <p className="text-[#A0A0B0] text-sm mt-1">
-                  Nạp <span className="text-[#FF6B00] font-bold">{selected.credits} credits</span> —{" "}
-                  <span className="text-white font-semibold">{selected.price.toLocaleString("vi-VN")} ₫</span>
-                </p>
-              </div>
-
-              {/* QR Code via VietQR */}
-              <div className="bg-white rounded-2xl p-3 mx-auto w-fit mb-5">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={vietqrUrl(selected.price, user?.email ?? "")}
-                  alt="QR thanh toán MB Bank"
-                  width={220}
-                  height={220}
-                  className="rounded-xl"
-                />
-              </div>
-
-              <div className="space-y-2 text-sm mb-5">
-                {[
-                  { label: "Ngân hàng", value: "MB Bank" },
-                  { label: "Số TK", value: MB_ACCOUNT },
-                  { label: "Chủ TK", value: MB_NAME },
-                  { label: "Số tiền", value: `${selected.price.toLocaleString("vi-VN")} ₫` },
-                ].map((r) => (
-                  <div key={r.label} className="flex justify-between">
-                    <span className="text-[#A0A0B0]">{r.label}:</span>
-                    <span className="text-white font-medium">{r.value}</span>
-                  </div>
-                ))}
-                <div className="flex justify-between items-center pt-1 border-t border-[#2A2A3A]">
-                  <span className="text-[#A0A0B0]">Nội dung CK:</span>
-                  <div className="flex items-center gap-2">
-                    <code className="text-[#FF6B00] text-xs font-mono">MN {user?.email}</code>
-                    <button onClick={() => handleCopy(`MN ${user?.email ?? ""}`, "qr-desc")} className="text-[#A0A0B0] hover:text-[#FF6B00] transition-colors">
-                      {copied === "qr-desc" ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+              <AnimatePresence mode="wait">
+                {paySuccess ? (
+                  /* ── Success screen ── */
+                  <motion.div key="success"
+                    initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+                    className="text-center py-4"
+                  >
+                    <motion.div
+                      initial={{ scale: 0 }} animate={{ scale: 1 }}
+                      transition={{ type: "spring", stiffness: 300, damping: 20, delay: 0.1 }}
+                      className="w-20 h-20 rounded-full bg-green-500/15 border-2 border-green-500 flex items-center justify-center mx-auto mb-4"
+                    >
+                      <CheckCircle2 className="w-10 h-10 text-green-400" />
+                    </motion.div>
+                    <h3 className="text-white font-bold text-xl mb-1">Thanh toán thành công!</h3>
+                    <p className="text-[#A0A0B0] text-sm mb-4">Đã cộng vào tài khoản của bạn</p>
+                    <div className="bg-[#FF6B00]/10 border border-[#FF6B00]/20 rounded-xl py-4 px-6 mb-4">
+                      <p className="text-[#FF6B00] text-3xl font-bold">+{newCredits}</p>
+                      <p className="text-[#A0A0B0] text-sm">credits</p>
+                    </div>
+                    <p className="text-white text-sm font-medium">
+                      Số dư hiện tại:{" "}
+                      <span className="text-[#FF6B00] font-bold">{user?.credits}</span> credits
+                    </p>
+                    <button onClick={closeQr}
+                      className="mt-5 w-full bg-[#FF6B00] hover:bg-[#E55A00] text-white font-semibold py-3 rounded-xl transition-colors"
+                    >
+                      Tiếp tục sử dụng
                     </button>
-                  </div>
-                </div>
-              </div>
+                  </motion.div>
+                ) : (
+                  /* ── QR screen ── */
+                  <motion.div key="qr" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    {/* Step indicators */}
+                    <div className="flex items-center justify-center gap-1.5 mb-5">
+                      {(["Quét QR", "Chuyển khoản", "Nhận credits"] as const).map((step, i) => (
+                        <div key={i} className="flex items-center gap-1">
+                          <div className="w-5 h-5 rounded-full bg-[#FF6B00]/20 border border-[#FF6B00]/40 flex items-center justify-center text-[#FF6B00] text-[10px] font-bold shrink-0">
+                            {i + 1}
+                          </div>
+                          <span className="text-[#A0A0B0] text-[10px] whitespace-nowrap">{step}</span>
+                          {i < 2 && <div className="w-3 h-px bg-[#2A2A3A] mx-0.5" />}
+                        </div>
+                      ))}
+                    </div>
 
-              <div className="bg-[#FF6B00]/10 border border-[#FF6B00]/20 rounded-xl p-3 text-xs text-[#A0A0B0] text-center">
-                Sau khi chuyển khoản, bấm <strong className="text-white">&quot;Đồng bộ credits&quot;</strong> để cập nhật ngay
-              </div>
+                    <div className="text-center mb-4">
+                      <p className="text-white font-bold text-lg">
+                        Nạp <span className="text-[#FF6B00]">{selected.credits} credits</span>
+                      </p>
+                      <p className="text-[#A0A0B0] text-sm">{selected.price.toLocaleString("vi-VN")} ₫</p>
+                    </div>
+
+                    {/* QR image */}
+                    <div className="bg-white rounded-2xl p-3 mx-auto w-fit mb-4">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={vietqrUrl(selected.price, user?.email ?? "")}
+                        alt="QR thanh toán MB Bank"
+                        width={210}
+                        height={210}
+                        className="rounded-xl"
+                      />
+                    </div>
+
+                    {/* Bank details */}
+                    <div className="space-y-2 text-sm mb-4">
+                      {[
+                        { label: "Ngân hàng", value: "MB Bank" },
+                        { label: "Số TK",     value: MB_ACCOUNT },
+                        { label: "Chủ TK",    value: MB_NAME },
+                        { label: "Số tiền",   value: `${selected.price.toLocaleString("vi-VN")} ₫` },
+                      ].map((r) => (
+                        <div key={r.label} className="flex justify-between">
+                          <span className="text-[#A0A0B0]">{r.label}:</span>
+                          <span className="text-white font-medium">{r.value}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between items-center pt-1 border-t border-[#2A2A3A]">
+                        <span className="text-[#A0A0B0]">Nội dung CK:</span>
+                        <div className="flex items-center gap-2">
+                          <code className="text-[#FF6B00] text-xs font-mono">MN {user?.email}</code>
+                          <button onClick={() => handleCopy(`MN ${user?.email ?? ""}`, "qr-desc")}
+                            className="text-[#A0A0B0] hover:text-[#FF6B00] transition-colors">
+                            {copied === "qr-desc"
+                              ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+                              : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Live waiting indicator */}
+                    <div className="bg-[#0A0A0F] border border-[#2A2A3A] rounded-xl p-3 flex items-center gap-3">
+                      <div className="relative shrink-0">
+                        <div className="w-2.5 h-2.5 rounded-full bg-[#FF6B00] animate-pulse" />
+                        <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-[#FF6B00] animate-ping opacity-40" />
+                      </div>
+                      <p className="text-[#A0A0B0] text-xs leading-relaxed">
+                        Đang chờ thanh toán… Credits sẽ được cộng tự động sau khi chuyển khoản thành công.
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           </div>
         )}

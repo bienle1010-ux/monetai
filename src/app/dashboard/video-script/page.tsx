@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Video, Sparkles, Copy, Clock, BarChart2 } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth, ADMIN_EMAIL, UNLIMITED_CREDITS } from "@/contexts/AuthContext";
 
 const platforms = [
   { id: "tiktok", label: "TikTok", duration: "15-60s" },
@@ -65,12 +65,15 @@ export default function VideoScriptPage() {
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  const isAdmin     = user?.email === ADMIN_EMAIL;
+  const isUnlimited = isAdmin || user?.credits === UNLIMITED_CREDITS;
+
   const handleGenerate = async () => {
     if (!topic) return;
     setLoading(true);
     await new Promise((r) => setTimeout(r, 1800));
     setOutput(sampleScript);
-    if (user && user.credits > 0) updateUser({ credits: user.credits - 2 });
+    if (user && !isUnlimited && user.credits > 0) updateUser({ credits: user.credits - 2 });
     setLoading(false);
   };
 
