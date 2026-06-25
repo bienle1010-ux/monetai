@@ -45,11 +45,9 @@ function StatCard({ icon, value, label }: { icon: React.ReactNode; value: string
 // ── Agent card ─────────────────────────────────────────────────────────────────
 function AgentCard({
   agent,
-  onDemo,
   onBuy,
 }: {
   agent: AgentData;
-  onDemo: (a: AgentData) => void;
   onBuy: (a: AgentData) => void;
 }) {
   return (
@@ -111,14 +109,12 @@ function AgentCard({
 
       {/* Actions */}
       <div className="grid grid-cols-2 gap-2">
-        <motion.button
-          whileTap={{ scale: 0.97 }}
-          onClick={() => onDemo(agent)}
+        <Link href={`/agents/${agent.id}`}
           className="flex items-center justify-center gap-1.5 border border-[#FF6B00]/40 text-[#FF6B00] hover:bg-[#FF6B00]/10 text-xs font-semibold py-2.5 rounded-xl transition-colors"
         >
           <Sparkles className="w-3.5 h-3.5" />
           Dùng thử
-        </motion.button>
+        </Link>
         <motion.button
           whileTap={{ scale: 0.97 }}
           onClick={() => onBuy(agent)}
@@ -631,7 +627,6 @@ export default function AgentMarketplacePage() {
             >
               <AgentCard
                 agent={agent}
-                onDemo={setDemoAgent}
                 onBuy={setBuyAgent}
               />
             </motion.div>

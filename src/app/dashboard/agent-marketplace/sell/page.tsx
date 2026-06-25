@@ -1,20 +1,28 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, ArrowRight, Bot, CheckCircle2, Star, Plus, X,
   Banknote, Eye, Send, Sparkles, Tag, Upload, Clock,
   TrendingUp, ShieldCheck, AlertCircle, ChevronDown, ChevronUp,
-  RefreshCw, Package, Info,
+  RefreshCw, Package, Info, FileText, FileUp, File,
+  Paperclip, Trash2, MessageSquare, Loader2, Database,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import type { ChatMessage, FileContext } from "@/app/api/agent/chat/route";
+import { DeployTab } from "@/components/sell-agent/DeployTab";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const SELLER_CUT  = 0.8;
 const PAYOUT_DAYS = "7–10 ngày";
 const LS_KEY      = "monetai_my_agents";
+const MAX_FILES   = 5;
+const MAX_FILE_MB = 5;
+const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
+const TEXT_EXTS   = ["txt", "md", "csv", "json", "html", "xml", "yaml", "yml"];
+const ALLOWED_EXTS = [...TEXT_EXTS, "pdf"];
 
 const CATEGORIES  = [
   "Bán hàng", "Nội dung", "CSKH", "Marketing", "SEO",
@@ -37,12 +45,25 @@ const ICON_OPTIONS = [
 const BADGE_OPTIONS = [
   { value: "",          label: "Không có" },
   { value: "MỚI",      label: "🆕 MỚI" },
-  { value: "HOT",      label: "🔥 HOT" },
+  { value: "HOT",       label: "🔥 HOT" },
   { value: "BÁN CHẠY", label: "⭐ BÁN CHẠY" },
 ];
 const STEPS = ["Thông tin cơ bản", "Tính năng & Demo", "Giá & Nhận tiền", "Xem lại & Đăng"];
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+export interface AttachmentFile {
+  id:          string;
+  name:        string;
+  ext:         string;
+  mimeType:    string;
+  size:        number;
+  isText:      boolean;
+  content:     string;   // UTF-8 text for text files, empty for binary
+  description: string;
+  status:      "reading" | "ready" | "error";
+  error?:      string;
+}
+
 interface SellForm {
   agentName: string; tagline: string; description: string;
   category: string; icon: string; badge: string;
@@ -50,6 +71,7 @@ interface SellForm {
   demoGreeting: string; demoSuggestions: string[];
   price: string; priceType: "tháng" | "lần";
   bankName: string; bankAccount: string; bankHolder: string;
+  attachments: AttachmentFile[];
   agreedToTerms: boolean;
 }
 
@@ -61,6 +83,7 @@ interface SavedAgent {
   features: string[]; systemPrompt: string;
   demoGreeting: string; demoSuggestions: string[];
   bankName: string; bankAccount: string; bankHolder: string;
+  attachments: AttachmentFile[];
   status: "pending" | "active" | "rejected";
   rejectionReason?: string;
   createdAt: string;
@@ -77,7 +100,34 @@ const STATUS_LABEL: Record<string, string> = {
   pending: "Đang duyệt", active: "Đang bán", rejected: "Bị từ chối",
 };
 
-// ── LocalStorage helpers ────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
+const fmt = (n: number) => n.toLocaleString("vi-VN");
+
+function fmtSize(bytes: number): string {
+  if (bytes < 1024)       return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function fileExt(name: string): string {
+  return name.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function FileTypeIcon({ ext }: { ext: string }) {
+  const colors: Record<string, string> = {
+    pdf:  "text-red-400",
+    csv:  "text-green-400",
+    json: "text-yellow-400",
+    md:   "text-blue-400",
+    txt:  "text-[#A0A0B0]",
+  };
+  return (
+    <div className={`w-8 h-8 rounded-lg bg-[#0A0A0F] border border-[#2A2A3A] flex items-center justify-center shrink-0 ${colors[ext] ?? "text-[#A0A0B0]"}`}>
+      <FileText className="w-4 h-4" />
+    </div>
+  );
+}
+
 function loadMyAgents(): SavedAgent[] {
   try { return JSON.parse(localStorage.getItem(LS_KEY) || "[]"); }
   catch { return []; }
@@ -86,7 +136,6 @@ function saveMyAgents(agents: SavedAgent[]) {
   localStorage.setItem(LS_KEY, JSON.stringify(agents));
 }
 
-// ── Validation ──────────────────────────────────────────────────────────────────
 function validateStep(step: number, f: SellForm): string[] {
   const errs: string[] = [];
   if (step === 0) {
@@ -99,20 +148,31 @@ function validateStep(step: number, f: SellForm): string[] {
     if (f.features.filter(Boolean).length < 2) errs.push("Nhập ít nhất 2 tính năng");
     if (!f.systemPrompt.trim())  errs.push("System prompt không được để trống");
     if (!f.demoGreeting.trim())  errs.push("Lời chào demo không được để trống");
-    if (f.demoSuggestions.filter(Boolean).length < 1) errs.push("Nhập ít nhất 1 gợi ý câu hỏi");
+    if (f.demoSuggestions.filter(Boolean).length < 1) errs.push("Nhập ít nhất 1 gợi ý");
+    if (f.attachments.some((a) => a.status === "reading")) errs.push("Đang đọc file, vui lòng chờ...");
   }
   if (step === 2) {
     const p = Number(f.price);
     if (!f.price || isNaN(p) || p < 10_000) errs.push("Giá tối thiểu 10.000₫");
     if (!f.bankName)             errs.push("Chọn ngân hàng");
-    if (!f.bankAccount.trim())   errs.push("Nhập số tài khoản ngân hàng");
+    if (!f.bankAccount.trim())   errs.push("Nhập số tài khoản");
     if (!f.bankHolder.trim())    errs.push("Nhập tên chủ tài khoản");
   }
   if (step === 3 && !f.agreedToTerms) errs.push("Vui lòng đồng ý với điều khoản");
   return errs;
 }
 
-const fmt = (n: number) => n.toLocaleString("vi-VN");
+function defaultForm(): SellForm {
+  return {
+    agentName: "", tagline: "", description: "", category: "", icon: "🤖", badge: "",
+    features: ["", "", "", ""], systemPrompt: "", demoGreeting: "",
+    demoSuggestions: ["", "", ""],
+    price: "", priceType: "tháng",
+    bankName: "", bankAccount: "", bankHolder: "",
+    attachments: [],
+    agreedToTerms: false,
+  };
+}
 
 // ── Preview card ───────────────────────────────────────────────────────────────
 function PreviewCard({ f }: { f: SellForm }) {
@@ -120,9 +180,7 @@ function PreviewCard({ f }: { f: SellForm }) {
   return (
     <div className="bg-[#16161F] border border-[#FF6B00]/30 rounded-2xl p-5">
       <div className="flex items-start justify-between mb-3">
-        <div className="w-12 h-12 rounded-xl bg-[#FF6B00]/15 flex items-center justify-center text-2xl shrink-0">
-          {f.icon || "🤖"}
-        </div>
+        <div className="w-12 h-12 rounded-xl bg-[#FF6B00]/15 flex items-center justify-center text-2xl shrink-0">{f.icon || "🤖"}</div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
           {f.badge && (
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
@@ -131,23 +189,26 @@ function PreviewCard({ f }: { f: SellForm }) {
             }`}>{f.badge}</span>
           )}
           {f.category && (
-            <span className="text-[10px] font-medium bg-[#0A0A0F] border border-[#2A2A3A] text-[#A0A0B0] px-2 py-0.5 rounded-full">
-              {f.category}
-            </span>
+            <span className="text-[10px] font-medium bg-[#0A0A0F] border border-[#2A2A3A] text-[#A0A0B0] px-2 py-0.5 rounded-full">{f.category}</span>
           )}
         </div>
       </div>
       <h3 className="text-white font-semibold text-sm mb-0.5">{f.agentName || "Tên Agent"}</h3>
       <p className="text-[#FF6B00] text-xs font-medium mb-2">{f.tagline || "Tagline của bạn"}</p>
-      <p className="text-[#A0A0B0] text-xs leading-relaxed mb-3 line-clamp-2">
-        {f.description || "Mô tả agent sẽ xuất hiện ở đây..."}
-      </p>
+      <p className="text-[#A0A0B0] text-xs leading-relaxed mb-3 line-clamp-2">{f.description || "Mô tả agent..."}</p>
       {f.features.filter(Boolean).slice(0, 3).map((ft, i) => (
         <div key={i} className="flex items-start gap-2 text-xs text-[#A0A0B0] mb-1.5">
-          <CheckCircle2 className="w-3 h-3 text-[#FF6B00] shrink-0 mt-0.5" />
-          {ft}
+          <CheckCircle2 className="w-3 h-3 text-[#FF6B00] shrink-0 mt-0.5" />{ft}
         </div>
       ))}
+      {f.attachments.filter((a) => a.status === "ready").length > 0 && (
+        <div className="flex items-center gap-1.5 mt-2 mb-2">
+          <Database className="w-3 h-3 text-blue-400" />
+          <span className="text-blue-400 text-[11px] font-medium">
+            {f.attachments.filter((a) => a.status === "ready").length} tài liệu đính kèm
+          </span>
+        </div>
+      )}
       <div className="flex items-center gap-1 mt-3 mb-2">
         <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" />
         <span className="text-white text-xs font-medium">5.0</span>
@@ -161,9 +222,155 @@ function PreviewCard({ f }: { f: SellForm }) {
         <div className="flex items-center justify-center gap-1 border border-[#FF6B00]/40 text-[#FF6B00] text-xs font-semibold py-2 rounded-xl">
           <Sparkles className="w-3 h-3" /> Dùng thử
         </div>
-        <div className="flex items-center justify-center bg-[#FF6B00] text-white text-xs font-semibold py-2 rounded-xl">
-          Mua ngay
+        <div className="flex items-center justify-center bg-[#FF6B00] text-white text-xs font-semibold py-2 rounded-xl">Mua ngay</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Test agent chat ────────────────────────────────────────────────────────────
+function TestAgentChat({ form }: { form: SellForm }) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input,    setInput]    = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
+
+  const readyFiles = form.attachments.filter((a) => a.status === "ready" && a.isText && a.content);
+
+  const buildSystemPrompt = () => {
+    if (readyFiles.length === 0) return form.systemPrompt;
+    return form.systemPrompt; // file content is passed via fileContents param
+  };
+
+  const sendMsg = async (text: string) => {
+    if (!text.trim() || loading || !form.systemPrompt) return;
+    const userMsg: ChatMessage = { role: "user", content: text.trim() };
+    const next = [...messages, userMsg];
+    setMessages(next);
+    setInput("");
+    setLoading(true);
+
+    try {
+      const fileContents: FileContext[] = readyFiles.map((f) => ({
+        name:    f.name,
+        content: f.content,
+      }));
+
+      const res = await fetch("/api/agent/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemPrompt: buildSystemPrompt(),
+          messages: next,
+          fileContents: fileContents.length > 0 ? fileContents : undefined,
+        }),
+      });
+      const data = await res.json();
+      setMessages((prev) => [...prev, { role: "assistant", content: data.reply || data.error || "Xin lỗi, có lỗi xảy ra." }]);
+    } catch {
+      setMessages((prev) => [...prev, { role: "assistant", content: "Không kết nối được AI lúc này." }]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!form.systemPrompt.trim()) {
+    return (
+      <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-6 text-center">
+        <Bot className="w-10 h-10 mx-auto mb-2 text-[#2A2A3A]" />
+        <p className="text-[#5A5A7A] text-sm">Điền System Prompt để test Agent</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl overflow-hidden flex flex-col" style={{ height: "420px" }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[#2A2A3A] shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-[#FF6B00]/15 flex items-center justify-center text-base">{form.icon || "🤖"}</div>
+          <div>
+            <p className="text-white text-xs font-semibold">{form.agentName || "Agent Preview"}</p>
+            <div className="flex items-center gap-1">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+              <span className="text-green-400 text-[10px]">Live test</span>
+            </div>
+          </div>
         </div>
+        {readyFiles.length > 0 && (
+          <div className="flex items-center gap-1 text-blue-400 text-[10px]">
+            <Database className="w-3 h-3" />
+            {readyFiles.length} file đính kèm
+          </div>
+        )}
+        {messages.length > 0 && (
+          <button onClick={() => setMessages([])}
+            className="text-[#5A5A7A] hover:text-white transition-colors p-1"
+            title="Xoá hội thoại"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
+        {messages.length === 0 && (
+          <div className="text-center py-6">
+            <p className="text-[#5A5A7A] text-xs">Gửi tin nhắn để test agent của bạn</p>
+            {form.demoSuggestions.filter(Boolean).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 justify-center mt-3">
+                {form.demoSuggestions.filter(Boolean).slice(0, 2).map((s, i) => (
+                  <button key={i} onClick={() => sendMsg(s)}
+                    className="text-[10px] bg-[#0A0A0F] border border-[#2A2A3A] hover:border-[#FF6B00]/40 text-[#A0A0B0] hover:text-[#FF6B00] px-2.5 py-1 rounded-full transition-all"
+                  >{s}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+            {msg.role === "assistant" && (
+              <div className="w-6 h-6 rounded-md bg-[#FF6B00]/15 flex items-center justify-center text-sm mr-1.5 shrink-0 mt-0.5">{form.icon || "🤖"}</div>
+            )}
+            <div className={`max-w-[82%] rounded-2xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
+              msg.role === "user"
+                ? "bg-[#FF6B00] text-white rounded-br-sm"
+                : "bg-[#1A1A28] text-[#E0E0F0] rounded-bl-sm border border-[#2A2A3A]"
+            }`}>{msg.content}</div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-6 rounded-md bg-[#FF6B00]/15 flex items-center justify-center text-sm">{form.icon || "🤖"}</div>
+            <div className="bg-[#1A1A28] border border-[#2A2A3A] rounded-2xl rounded-bl-sm px-3 py-2.5 flex gap-1">
+              {[0,1,2].map((i) => (
+                <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#A0A0B0] animate-bounce"
+                  style={{ animationDelay: `${i * 0.15}s` }} />
+              ))}
+            </div>
+          </div>
+        )}
+        <div ref={endRef} />
+      </div>
+
+      {/* Input */}
+      <div className="p-3 border-t border-[#2A2A3A] shrink-0">
+        <form onSubmit={(e) => { e.preventDefault(); sendMsg(input); }} className="flex gap-2">
+          <input value={input} onChange={(e) => setInput(e.target.value)} disabled={loading}
+            placeholder="Nhập để test agent..."
+            className="flex-1 bg-[#0A0A0F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-xl px-3 py-2 text-white text-xs placeholder:text-[#5A5A7A] outline-none transition-colors disabled:opacity-50"
+          />
+          <button type="submit" disabled={loading || !input.trim()}
+            className="w-8 h-8 bg-[#FF6B00] hover:bg-[#E55A00] disabled:opacity-50 rounded-xl flex items-center justify-center transition-colors shrink-0"
+          >
+            <Send className="w-3.5 h-3.5 text-white" />
+          </button>
+        </form>
+        <p className="text-[#5A5A7A] text-[10px] text-center mt-1.5">Powered by GPT-4o / Gemini / Claude</p>
       </div>
     </div>
   );
@@ -171,12 +378,11 @@ function PreviewCard({ f }: { f: SellForm }) {
 
 // ── My agents panel ────────────────────────────────────────────────────────────
 function MyAgentsPanel({ email }: { email: string }) {
-  const [agents, setAgents]   = useState<SavedAgent[]>([]);
-  const [expanded, setExpand] = useState<string | null>(null);
+  const [agents,   setAgents]   = useState<SavedAgent[]>([]);
+  const [expanded, setExpand]   = useState<string | null>(null);
 
   const load = useCallback(() => {
-    const all = loadMyAgents().filter((a) => a.sellerEmail === email);
-    setAgents(all);
+    setAgents(loadMyAgents().filter((a) => a.sellerEmail === email));
   }, [email]);
 
   useEffect(() => { load(); }, [load]);
@@ -199,9 +405,9 @@ function MyAgentsPanel({ email }: { email: string }) {
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: "Tổng đơn bán",      value: String(totalSales),      icon: <TrendingUp  className="w-4 h-4 text-[#FF6B00]"  /> },
-          { label: "Chờ thanh toán",    value: `${fmt(totalPending)}₫`, icon: <Clock        className="w-4 h-4 text-yellow-400" /> },
-          { label: "Đã nhận",           value: `${fmt(totalReceived)}₫`,icon: <CheckCircle2 className="w-4 h-4 text-green-400"  /> },
+          { label: "Tổng đơn bán",   value: String(totalSales),       icon: <TrendingUp  className="w-4 h-4 text-[#FF6B00]"  /> },
+          { label: "Chờ thanh toán", value: `${fmt(totalPending)}₫`,  icon: <Clock        className="w-4 h-4 text-yellow-400" /> },
+          { label: "Đã nhận",        value: `${fmt(totalReceived)}₫`, icon: <CheckCircle2 className="w-4 h-4 text-green-400"  /> },
         ].map((s) => (
           <div key={s.label} className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-3 text-center">
             <div className="flex justify-center mb-1">{s.icon}</div>
@@ -220,45 +426,42 @@ function MyAgentsPanel({ email }: { email: string }) {
 
       {agents.map((agent) => (
         <div key={agent.id} className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl overflow-hidden">
-          <button
-            className="w-full flex items-center justify-between p-4 hover:bg-white/[0.02] transition-colors"
+          <button className="w-full flex items-center justify-between p-4 hover:bg-white/[0.02] transition-colors"
             onClick={() => setExpand(expanded === agent.id ? null : agent.id)}
           >
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#FF6B00]/15 flex items-center justify-center text-xl shrink-0">
-                {agent.icon}
-              </div>
+              <div className="w-10 h-10 rounded-xl bg-[#FF6B00]/15 flex items-center justify-center text-xl shrink-0">{agent.icon}</div>
               <div className="text-left">
                 <p className="text-white font-semibold text-sm">{agent.agentName}</p>
-                <p className="text-[#A0A0B0] text-xs">{agent.tagline}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[#A0A0B0] text-xs">{agent.tagline}</p>
+                  {agent.attachments?.length > 0 && (
+                    <div className="flex items-center gap-1 text-blue-400">
+                      <Paperclip className="w-2.5 h-2.5" />
+                      <span className="text-[10px]">{agent.attachments.length}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${STATUS_STYLE[agent.status]}`}>
                 {STATUS_LABEL[agent.status]}
               </span>
-              {expanded === agent.id
-                ? <ChevronUp className="w-4 h-4 text-[#A0A0B0]" />
-                : <ChevronDown className="w-4 h-4 text-[#A0A0B0]" />
-              }
+              {expanded === agent.id ? <ChevronUp className="w-4 h-4 text-[#A0A0B0]" /> : <ChevronDown className="w-4 h-4 text-[#A0A0B0]" />}
             </div>
           </button>
 
           <AnimatePresence>
             {expanded === agent.id && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}
-                className="overflow-hidden"
+              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden"
               >
                 <div className="px-4 pb-4 border-t border-[#2A2A3A] pt-3 space-y-3">
                   {agent.status === "pending" && (
                     <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-3">
                       <Clock className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
-                      <p className="text-yellow-400 text-xs">
-                        Agent đang chờ MonetAI xét duyệt (1–3 ngày làm việc).
-                        Sau khi duyệt, agent sẽ xuất hiện trong marketplace.
-                      </p>
+                      <p className="text-yellow-400 text-xs">Đang chờ MonetAI xét duyệt (1–3 ngày). Sau khi duyệt, agent sẽ xuất hiện trong marketplace.</p>
                     </div>
                   )}
                   {agent.status === "rejected" && agent.rejectionReason && (
@@ -268,13 +471,13 @@ function MyAgentsPanel({ email }: { email: string }) {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-0 text-xs">
+                  <div className="grid grid-cols-2 gap-x-4 text-xs">
                     {[
                       ["Giá bán",              `${fmt(agent.price)}₫/${agent.priceType}`],
                       ["Danh mục",             agent.category],
                       ["Đơn bán",              `${agent.totalSales} đơn`],
                       ["Doanh thu gộp",        `${fmt(agent.totalRevenue)}₫`],
-                      ["Chờ thanh toán (80%)", `${fmt(agent.pendingPayout)}₫`],
+                      ["Chờ TT (80%)",         `${fmt(agent.pendingPayout)}₫`],
                       ["Đã nhận",              `${fmt(agent.totalPayout)}₫`],
                     ].map(([label, value]) => (
                       <div key={label} className="flex justify-between py-1.5 border-b border-[#2A2A3A]">
@@ -284,10 +487,29 @@ function MyAgentsPanel({ email }: { email: string }) {
                     ))}
                   </div>
 
-                  <div className="flex justify-between text-[11px] text-[#5A5A7A]">
-                    <span>ID: {agent.id}</span>
-                    <span>Đăng {new Date(agent.createdAt).toLocaleDateString("vi-VN")}</span>
-                  </div>
+                  {/* Attachments */}
+                  {agent.attachments?.length > 0 && (
+                    <div>
+                      <p className="text-[#A0A0B0] text-xs font-medium mb-2 flex items-center gap-1.5">
+                        <Paperclip className="w-3 h-3" /> Tài liệu đính kèm
+                      </p>
+                      <div className="space-y-1.5">
+                        {agent.attachments.map((att) => (
+                          <div key={att.id} className="flex items-center gap-2 bg-[#0A0A0F] rounded-lg px-3 py-1.5">
+                            <FileTypeIcon ext={att.ext} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white text-xs truncate">{att.name}</p>
+                              <p className="text-[#5A5A7A] text-[10px]">{fmtSize(att.size)} · {att.description || att.ext.toUpperCase()}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-[#5A5A7A] text-[11px] text-right">
+                    Đăng {new Date(agent.createdAt).toLocaleDateString("vi-VN")}
+                  </p>
                 </div>
               </motion.div>
             )}
@@ -299,8 +521,8 @@ function MyAgentsPanel({ email }: { email: string }) {
         <div className="bg-[#FF6B00]/10 border border-[#FF6B00]/20 rounded-2xl p-4 flex items-start gap-3">
           <Banknote className="w-5 h-5 text-[#FF6B00] shrink-0 mt-0.5" />
           <p className="text-[#A0A0B0] text-xs leading-relaxed">
-            <strong className="text-white">{fmt(totalPending)}₫</strong> sẽ được chuyển về tài khoản trong {PAYOUT_DAYS}.
-            Thắc mắc: <strong className="text-white">0562 557 777</strong> hoặc <strong className="text-white">monetai.vn@gmail.com</strong>
+            <strong className="text-white">{fmt(totalPending)}₫</strong> sẽ được chuyển về trong {PAYOUT_DAYS}.
+            Liên hệ: <strong className="text-white">0562 557 777</strong>
           </p>
         </div>
       )}
@@ -308,34 +530,31 @@ function MyAgentsPanel({ email }: { email: string }) {
   );
 }
 
-// ── Default form state ─────────────────────────────────────────────────────────
-function defaultForm(): SellForm {
-  return {
-    agentName: "", tagline: "", description: "", category: "", icon: "🤖", badge: "",
-    features: ["", "", "", ""], systemPrompt: "", demoGreeting: "",
-    demoSuggestions: ["", "", ""],
-    price: "", priceType: "tháng",
-    bankName: "", bankAccount: "", bankHolder: "",
-    agreedToTerms: false,
-  };
-}
-
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function SellAgentPage() {
   const { user } = useAuth();
 
-  const [tab,       setTab]       = useState<"sell" | "my">("sell");
+  const [tab,       setTab]       = useState<"sell" | "my" | "deploy">("sell");
   const [step,      setStep]      = useState(0);
   const [errors,    setErrors]    = useState<string[]>([]);
   const [loading,   setLoading]   = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [form,      setForm]      = useState<SellForm>(defaultForm);
+  const [dragOver,  setDragOver]  = useState(false);
+  const [rightTab,  setRightTab]  = useState<"preview" | "test">("preview");
+  const [myCount,   setMyCount]   = useState(0);
 
-  // Count this seller's existing listings for badge in tab
-  const [myCount, setMyCount] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     if (user) setMyCount(loadMyAgents().filter((a) => a.sellerEmail === user.email).length);
   }, [user, submitted]);
+
+  // Switch right tab to "test" when entering step 1 (system prompt step)
+  useEffect(() => {
+    if (step === 1 && form.systemPrompt.trim()) setRightTab("test");
+    else if (step !== 1) setRightTab("preview");
+  }, [step, form.systemPrompt]);
 
   const set = (k: keyof SellForm, v: SellForm[keyof SellForm]) =>
     setForm((p) => ({ ...p, [k]: v }));
@@ -346,12 +565,101 @@ export default function SellAgentPage() {
   const setSuggestion = (i: number, v: string) =>
     setForm((p) => { const s = [...p.demoSuggestions]; s[i] = v; return { ...p, demoSuggestions: s }; });
 
-  const addFeature    = () =>
+  const addFeature = () =>
     setForm((p) => ({ ...p, features: [...p.features, ""] }));
 
   const removeFeature = (i: number) =>
     setForm((p) => ({ ...p, features: p.features.filter((_, idx) => idx !== i) }));
 
+  // ── File upload handlers ─────────────────────────────────────────────────────
+  const processFiles = async (fileList: FileList | null) => {
+    if (!fileList) return;
+    const files = Array.from(fileList);
+
+    const currentCount = form.attachments.length;
+    const canAdd = MAX_FILES - currentCount;
+    if (canAdd <= 0) return;
+
+    const toProcess = files.slice(0, canAdd);
+
+    for (const file of toProcess) {
+      const ext = fileExt(file.name);
+
+      // Validate extension
+      if (!ALLOWED_EXTS.includes(ext)) {
+        const errorEntry: AttachmentFile = {
+          id: `${Date.now()}-${Math.random()}`, name: file.name, ext,
+          mimeType: file.type, size: file.size,
+          isText: false, content: "", description: "",
+          status: "error", error: `Loại file không được hỗ trợ (.${ext}). Hỗ trợ: ${ALLOWED_EXTS.join(", ")}`,
+        };
+        setForm((p) => ({ ...p, attachments: [...p.attachments, errorEntry] }));
+        continue;
+      }
+
+      // Validate size
+      if (file.size > MAX_FILE_BYTES) {
+        const errorEntry: AttachmentFile = {
+          id: `${Date.now()}-${Math.random()}`, name: file.name, ext,
+          mimeType: file.type, size: file.size,
+          isText: false, content: "", description: "",
+          status: "error", error: `File quá lớn (${fmtSize(file.size)}). Tối đa ${MAX_FILE_MB}MB.`,
+        };
+        setForm((p) => ({ ...p, attachments: [...p.attachments, errorEntry] }));
+        continue;
+      }
+
+      const isText = TEXT_EXTS.includes(ext);
+      const id     = `${Date.now()}-${Math.random()}`;
+
+      // Add placeholder with reading status
+      const placeholder: AttachmentFile = {
+        id, name: file.name, ext, mimeType: file.type, size: file.size,
+        isText, content: "", description: "", status: "reading",
+      };
+      setForm((p) => ({ ...p, attachments: [...p.attachments, placeholder] }));
+
+      // Read file content
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = (e.target?.result as string) ?? "";
+        setForm((p) => ({
+          ...p,
+          attachments: p.attachments.map((a) =>
+            a.id === id ? { ...a, content, status: "ready" as const } : a
+          ),
+        }));
+      };
+      reader.onerror = () => {
+        setForm((p) => ({
+          ...p,
+          attachments: p.attachments.map((a) =>
+            a.id === id ? { ...a, status: "error" as const, error: "Không đọc được file" } : a
+          ),
+        }));
+      };
+
+      if (isText) reader.readAsText(file, "UTF-8");
+      else        reader.readAsDataURL(file);
+    }
+  };
+
+  const handleFileDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    processFiles(e.dataTransfer.files);
+  };
+
+  const removeAttachment = (id: string) =>
+    setForm((p) => ({ ...p, attachments: p.attachments.filter((a) => a.id !== id) }));
+
+  const updateAttachDesc = (id: string, desc: string) =>
+    setForm((p) => ({
+      ...p,
+      attachments: p.attachments.map((a) => a.id === id ? { ...a, description: desc } : a),
+    }));
+
+  // ── Navigation ───────────────────────────────────────────────────────────────
   const nextStep = () => {
     const errs = validateStep(step, form);
     if (errs.length > 0) { setErrors(errs); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
@@ -359,10 +667,9 @@ export default function SellAgentPage() {
     setStep((s) => s + 1);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-
   const prevStep = () => { setErrors([]); setStep((s) => s - 1); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
-  // ── Submit — saves to localStorage (primary) + tries API in background ─────
+  // ── Submit ───────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     const errs = validateStep(3, form);
     if (errs.length > 0) { setErrors(errs); return; }
@@ -388,20 +695,18 @@ export default function SellAgentPage() {
       bankName:       form.bankName,
       bankAccount:    form.bankAccount,
       bankHolder:     form.bankHolder,
+      attachments:    form.attachments.filter((a) => a.status === "ready"),
       status:         "pending",
       createdAt:      new Date().toISOString(),
-      totalSales:     0,
-      totalRevenue:   0,
-      pendingPayout:  0,
-      totalPayout:    0,
+      totalSales: 0, totalRevenue: 0, pendingPayout: 0, totalPayout: 0,
     };
 
-    // 1. Save to localStorage immediately — this always works
+    // Save to localStorage immediately
     const existing = loadMyAgents();
     existing.push(newAgent);
     saveMyAgents(existing);
 
-    // 2. Try API in background (optional — if Supabase table exists, syncs there too)
+    // Background API sync (optional — works without Supabase table)
     fetch("/api/agent/submit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -423,18 +728,10 @@ export default function SellAgentPage() {
         bankName:        newAgent.bankName,
         bankAccount:     newAgent.bankAccount,
         bankHolder:      newAgent.bankHolder,
+        attachmentCount: newAgent.attachments.length,
+        attachmentNames: newAgent.attachments.map((a) => a.name),
       }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        // If server returned a real DB id, update the localStorage record
-        if (data.id && data.id !== newAgent.id) {
-          const saved = loadMyAgents();
-          const idx = saved.findIndex((a) => a.id === newAgent.id);
-          if (idx >= 0) { saved[idx].id = data.id; saveMyAgents(saved); }
-        }
-      })
-      .catch(() => { /* API failed — localStorage record already saved, no problem */ });
+    }).catch(() => {});
 
     setLoading(false);
     setSubmitted(true);
@@ -464,27 +761,30 @@ export default function SellAgentPage() {
           </div>
         </motion.div>
         <h2 className="text-white text-2xl font-bold mb-2">Đã gửi thành công!</h2>
-        <p className="text-[#A0A0B0] mb-1">Agent của bạn đang chờ MonetAI xét duyệt.</p>
-        <p className="text-[#5A5A7A] text-sm mb-7">Thường mất 1–3 ngày làm việc. Chúng tôi sẽ thông báo qua email khi duyệt xong.</p>
+        <p className="text-[#A0A0B0] mb-1">Agent đang chờ MonetAI xét duyệt.</p>
+        {form.attachments.filter((a) => a.status === "ready").length > 0 && (
+          <p className="text-blue-400 text-sm mb-1">
+            {form.attachments.filter((a) => a.status === "ready").length} tài liệu đính kèm đã được lưu.
+          </p>
+        )}
+        <p className="text-[#5A5A7A] text-sm mb-7">Thường mất 1–3 ngày làm việc.</p>
 
         <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-5 text-left mb-6 space-y-3">
-          <p className="text-white font-semibold text-sm mb-1">Quy trình tiếp theo:</p>
           {[
-            { icon: "🔍", t: "MonetAI xét duyệt agent (1–3 ngày làm việc)" },
-            { icon: "✅", t: "Agent được đăng lên marketplace" },
-            { icon: "💰", t: "Khi có người mua, MonetAI nhận tiền và ghi nhận 80% cho bạn" },
-            { icon: "🏦", t: `Sau ${PAYOUT_DAYS}, 80% doanh thu chuyển về tài khoản ngân hàng của bạn` },
+            { e: "🔍", t: "MonetAI xét duyệt agent + tài liệu đính kèm" },
+            { e: "✅", t: "Agent được tích hợp và đăng lên marketplace" },
+            { e: "💰", t: "Khi có người mua, MonetAI nhận tiền và ghi nhận 80% cho bạn" },
+            { e: "🏦", t: `Sau ${PAYOUT_DAYS}, 80% chuyển về tài khoản ngân hàng của bạn` },
           ].map((r, i) => (
             <div key={i} className="flex items-start gap-3 text-sm">
-              <span className="text-xl shrink-0">{r.icon}</span>
+              <span className="text-xl shrink-0">{r.e}</span>
               <p className="text-[#A0A0B0]">{r.t}</p>
             </div>
           ))}
         </div>
 
         <div className="flex gap-3 justify-center">
-          <button
-            onClick={() => { setSubmitted(false); setStep(0); setForm(defaultForm()); setTab("my"); }}
+          <button onClick={() => { setSubmitted(false); setStep(0); setForm(defaultForm()); setTab("my"); }}
             className="flex items-center gap-2 border border-[#2A2A3A] text-[#A0A0B0] hover:text-white px-5 py-2.5 rounded-xl text-sm transition-colors"
           >
             <Package className="w-4 h-4" /> Xem agent của tôi
@@ -502,7 +802,6 @@ export default function SellAgentPage() {
   // ── Main layout ───────────────────────────────────────────────────────────────
   return (
     <div className="max-w-5xl mx-auto">
-
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <Link href="/dashboard/agent-marketplace"
@@ -517,27 +816,42 @@ export default function SellAgentPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 bg-[#16161F] border border-[#2A2A3A] rounded-xl p-1 w-fit mb-6">
-        {(["sell", "my"] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`relative text-sm px-4 py-2 rounded-lg transition-all font-medium ${
-              tab === t ? "bg-[#FF6B00] text-white" : "text-[#A0A0B0] hover:text-white"
-            }`}
-          >
-            {t === "sell" ? "Đăng bán mới" : "Agent của tôi"}
-            {t === "my" && myCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-green-500 text-white text-[9px] font-bold flex items-center justify-center">
-                {myCount}
-              </span>
-            )}
-          </button>
-        ))}
+      <div className="flex gap-1 bg-[#16161F] border border-[#2A2A3A] rounded-xl p-1 w-fit mb-6 flex-wrap">
+        <button onClick={() => setTab("sell")}
+          className={`text-sm px-4 py-2 rounded-lg transition-all font-medium ${
+            tab === "sell" ? "bg-[#FF6B00] text-white" : "text-[#A0A0B0] hover:text-white"
+          }`}
+        >Đăng bán mới</button>
+
+        <button onClick={() => setTab("deploy")}
+          className={`flex items-center gap-1.5 text-sm px-4 py-2 rounded-lg transition-all font-medium ${
+            tab === "deploy" ? "bg-[#FF6B00] text-white" : "text-[#A0A0B0] hover:text-white"
+          }`}
+        >
+          <span>🚀</span> Tải lên & Triển khai
+        </button>
+
+        <button onClick={() => setTab("my")}
+          className={`relative text-sm px-4 py-2 rounded-lg transition-all font-medium ${
+            tab === "my" ? "bg-[#FF6B00] text-white" : "text-[#A0A0B0] hover:text-white"
+          }`}
+        >
+          Agent của tôi
+          {myCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-green-500 text-white text-[9px] font-bold flex items-center justify-center">{myCount}</span>
+          )}
+        </button>
       </div>
 
-      {/* ── MY AGENTS tab ──────────────────────────────────────────────────────── */}
+      {/* My agents tab */}
       {tab === "my" && <MyAgentsPanel email={user.email} />}
 
-      {/* ── SELL FORM tab ─────────────────────────────────────────────────────── */}
+      {/* Deploy tab */}
+      {tab === "deploy" && (
+        <DeployTab userEmail={user.email} userName={user.name} />
+      )}
+
+      {/* Sell form */}
       {tab === "sell" && (
         <div className="grid lg:grid-cols-3 gap-6">
 
@@ -556,9 +870,7 @@ export default function SellAgentPage() {
                       }`}>
                         {i < step ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
                       </div>
-                      <p className={`text-[10px] mt-1 text-center hidden sm:block leading-tight ${i === step ? "text-white font-medium" : "text-[#5A5A7A]"}`}>
-                        {s}
-                      </p>
+                      <p className={`text-[10px] mt-1 text-center hidden sm:block leading-tight ${i === step ? "text-white font-medium" : "text-[#5A5A7A]"}`}>{s}</p>
                     </div>
                     {i < STEPS.length - 1 && (
                       <div className={`h-px flex-1 mx-2 mb-3 sm:mb-0 ${i < step ? "bg-green-500" : "bg-[#2A2A3A]"}`} />
@@ -583,7 +895,7 @@ export default function SellAgentPage() {
               )}
             </AnimatePresence>
 
-            {/* ── Step 1 ─────────────────────────────────────────────────────── */}
+            {/* ── Step 1: Basic info ─────────────────────────────────────── */}
             {step === 0 && (
               <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }}
                 className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-5 space-y-4"
@@ -610,9 +922,7 @@ export default function SellAgentPage() {
                 </div>
 
                 <div>
-                  <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">
-                    Tên Agent <span className="text-red-400">*</span>
-                  </label>
+                  <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">Tên Agent <span className="text-red-400">*</span></label>
                   <input value={form.agentName} onChange={(e) => set("agentName", e.target.value)}
                     placeholder="VD: Sales Consultant Pro" maxLength={60}
                     className="w-full bg-[#0A0A0F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-xl px-4 py-2.5 text-white text-sm placeholder:text-[#5A5A7A] outline-none transition-all"
@@ -621,9 +931,7 @@ export default function SellAgentPage() {
                 </div>
 
                 <div>
-                  <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">
-                    Tagline ngắn <span className="text-red-400">*</span>
-                  </label>
+                  <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">Tagline ngắn <span className="text-red-400">*</span></label>
                   <input value={form.tagline} onChange={(e) => set("tagline", e.target.value)}
                     placeholder="VD: Tư vấn & chốt sale 24/7 không nghỉ" maxLength={80}
                     className="w-full bg-[#0A0A0F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-xl px-4 py-2.5 text-white text-sm placeholder:text-[#5A5A7A] outline-none transition-all"
@@ -632,9 +940,7 @@ export default function SellAgentPage() {
                 </div>
 
                 <div>
-                  <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">
-                    Mô tả chi tiết <span className="text-red-400">*</span>
-                  </label>
+                  <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">Mô tả chi tiết <span className="text-red-400">*</span></label>
                   <textarea value={form.description} onChange={(e) => set("description", e.target.value)}
                     placeholder="Mô tả agent làm được gì, phù hợp với ai, lợi ích chính là gì..."
                     rows={3} maxLength={300}
@@ -645,9 +951,7 @@ export default function SellAgentPage() {
 
                 <div className="grid sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">
-                      Danh mục <span className="text-red-400">*</span>
-                    </label>
+                    <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">Danh mục <span className="text-red-400">*</span></label>
                     <select value={form.category} onChange={(e) => set("category", e.target.value)}
                       className="w-full bg-[#0A0A0F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-xl px-4 py-2.5 text-white text-sm outline-none transition-all appearance-none cursor-pointer"
                     >
@@ -673,9 +977,10 @@ export default function SellAgentPage() {
               </motion.div>
             )}
 
-            {/* ── Step 2 ─────────────────────────────────────────────────────── */}
+            {/* ── Step 2: Features + Files + Demo ───────────────────────── */}
             {step === 1 && (
               <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
+
                 {/* Features */}
                 <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-5">
                   <div className="flex items-center justify-between mb-3">
@@ -685,7 +990,6 @@ export default function SellAgentPage() {
                     </div>
                     <span className="text-[#5A5A7A] text-xs">{form.features.filter(Boolean).length}/6</span>
                   </div>
-                  <p className="text-[#A0A0B0] text-xs mb-3">Nhập ít nhất 2, tối đa 6 tính năng. Ngắn gọn và cụ thể.</p>
                   <div className="space-y-2">
                     {form.features.map((ft, i) => (
                       <div key={i} className="flex items-center gap-2">
@@ -704,9 +1008,7 @@ export default function SellAgentPage() {
                     {form.features.length < 6 && (
                       <button type="button" onClick={addFeature}
                         className="w-full border border-dashed border-[#2A2A3A] hover:border-[#FF6B00]/40 text-[#5A5A7A] hover:text-[#FF6B00] text-xs py-2 rounded-xl transition-all flex items-center justify-center gap-1"
-                      >
-                        <Plus className="w-3.5 h-3.5" /> Thêm tính năng
-                      </button>
+                      ><Plus className="w-3.5 h-3.5" /> Thêm tính năng</button>
                     )}
                   </div>
                 </div>
@@ -718,28 +1020,168 @@ export default function SellAgentPage() {
                     <h2 className="text-white font-semibold">System Prompt</h2>
                     <div className="group relative ml-auto">
                       <Info className="w-3.5 h-3.5 text-[#5A5A7A] cursor-help" />
-                      <div className="absolute right-0 top-5 w-60 bg-[#1A1A28] border border-[#2A2A3A] rounded-xl p-3 text-xs text-[#A0A0B0] opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
-                        System prompt là hướng dẫn ẩn cho AI. Khách hàng sẽ không thấy nhưng AI luôn tuân theo.
-                        Càng chi tiết, agent càng hiệu quả.
+                      <div className="absolute right-0 top-5 w-56 bg-[#1A1A28] border border-[#2A2A3A] rounded-xl p-3 text-xs text-[#A0A0B0] opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
+                        Hướng dẫn ẩn cho AI. Định nghĩa vai trò, nhiệm vụ và phong cách. File đính kèm sẽ tự động được thêm vào đây.
                       </div>
                     </div>
                   </div>
-                  <p className="text-[#A0A0B0] text-xs mb-3">Định nghĩa vai trò, nhiệm vụ và phong cách của agent.</p>
+                  <p className="text-[#A0A0B0] text-xs mb-3">Định nghĩa vai trò và nhiệm vụ. Càng chi tiết, AI càng chuẩn xác.</p>
                   <textarea value={form.systemPrompt} onChange={(e) => set("systemPrompt", e.target.value)}
-                    placeholder={`VD:\nBạn là [Tên Agent], chuyên gia về [lĩnh vực].\nNhiệm vụ: [mô tả cụ thể]\nPhong cách: [thân thiện / chuyên nghiệp]\nQuy tắc:\n- Luôn hỏi nhu cầu trước khi tư vấn\n- Sử dụng ví dụ thực tế\n- Kết thúc bằng CTA rõ ràng`}
-                    rows={8} maxLength={2000}
+                    placeholder={`VD:\nBạn là [Tên Agent], chuyên gia về [lĩnh vực].\nNhiệm vụ: [mô tả cụ thể]\nPhong cách: [thân thiện / chuyên nghiệp]\nQuy tắc:\n- Luôn hỏi nhu cầu trước khi tư vấn\n- Sử dụng số liệu và ví dụ thực tế`}
+                    rows={7} maxLength={2000}
                     className="w-full bg-[#0A0A0F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-xl px-4 py-2.5 text-white text-sm placeholder:text-[#5A5A7A] outline-none transition-all resize-none font-mono"
                   />
                   <p className="text-[#5A5A7A] text-[11px] mt-1 text-right">{form.systemPrompt.length}/2000</p>
                 </div>
 
+                {/* ── FILE UPLOAD SECTION ────────────────────────────────── */}
+                <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <Paperclip className="w-4 h-4 text-[#FF6B00]" />
+                      <h2 className="text-white font-semibold">Tài liệu đính kèm</h2>
+                      <span className="text-xs bg-blue-500/15 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full font-medium">AI Knowledge Base</span>
+                    </div>
+                    <span className="text-[#5A5A7A] text-xs">{form.attachments.length}/{MAX_FILES}</span>
+                  </div>
+                  <p className="text-[#A0A0B0] text-xs mb-4 leading-relaxed">
+                    Upload file để AI Agent tham khảo khi trả lời. Nội dung file sẽ được tích hợp vào knowledge base của agent,
+                    giúp agent trả lời chính xác hơn về sản phẩm, dịch vụ của bạn.
+                  </p>
+
+                  {/* Supported types info */}
+                  <div className="grid grid-cols-4 gap-2 mb-4">
+                    {[
+                      { ext: "TXT/MD",  desc: "Văn bản, hướng dẫn",    color: "text-[#A0A0B0]" },
+                      { ext: "CSV",     desc: "Dữ liệu, danh sách",    color: "text-green-400"  },
+                      { ext: "JSON",    desc: "Cấu hình, structured",  color: "text-yellow-400" },
+                      { ext: "PDF",     desc: "Tài liệu, catalog",     color: "text-red-400"    },
+                    ].map((t) => (
+                      <div key={t.ext} className="bg-[#0A0A0F] border border-[#2A2A3A] rounded-xl p-2 text-center">
+                        <p className={`text-xs font-bold ${t.color}`}>{t.ext}</p>
+                        <p className="text-[#5A5A7A] text-[10px] mt-0.5">{t.desc}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Drop zone */}
+                  {form.attachments.length < MAX_FILES && (
+                    <div
+                      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                      onDragLeave={() => setDragOver(false)}
+                      onDrop={handleFileDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                      className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
+                        dragOver
+                          ? "border-[#FF6B00] bg-[#FF6B00]/5 scale-[1.01]"
+                          : "border-[#2A2A3A] hover:border-[#FF6B00]/40 hover:bg-[#FF6B00]/3"
+                      }`}
+                    >
+                      <FileUp className="w-8 h-8 mx-auto mb-2 text-[#5A5A7A]" />
+                      <p className="text-[#A0A0B0] text-sm">
+                        Kéo thả hoặc <span className="text-[#FF6B00] font-medium">chọn file</span>
+                      </p>
+                      <p className="text-[#5A5A7A] text-xs mt-1">
+                        TXT, MD, CSV, JSON, HTML, PDF · Tối đa {MAX_FILE_MB}MB/file · {MAX_FILES} file
+                      </p>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept=".txt,.md,.csv,.json,.html,.xml,.yaml,.yml,.pdf"
+                        onChange={(e) => processFiles(e.target.files)}
+                        className="hidden"
+                      />
+                    </div>
+                  )}
+
+                  {/* File list */}
+                  {form.attachments.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {form.attachments.map((file) => (
+                        <motion.div key={file.id}
+                          initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                          className={`bg-[#0A0A0F] border rounded-xl p-3 transition-colors ${
+                            file.status === "error"   ? "border-red-500/30" :
+                            file.status === "ready"   ? "border-green-500/20" :
+                            "border-[#2A2A3A]"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <FileTypeIcon ext={file.ext} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white text-xs font-medium truncate">{file.name}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <p className="text-[#5A5A7A] text-[11px]">{fmtSize(file.size)}</p>
+                                {file.isText && file.status === "ready" && (
+                                  <span className="text-green-400 text-[10px] bg-green-500/10 border border-green-500/20 px-1.5 py-0.5 rounded-full">
+                                    ✓ Text đã đọc
+                                  </span>
+                                )}
+                                {!file.isText && file.status === "ready" && (
+                                  <span className="text-orange-400 text-[10px] bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded-full">
+                                    Binary (ảnh tham khảo)
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {file.status === "reading" && <Loader2 className="w-4 h-4 text-[#FF6B00] animate-spin" />}
+                              {file.status === "ready"   && <CheckCircle2 className="w-4 h-4 text-green-400" />}
+                              {file.status === "error"   && <AlertCircle  className="w-4 h-4 text-red-400"   />}
+                              <button onClick={() => removeAttachment(file.id)}
+                                className="text-[#5A5A7A] hover:text-red-400 transition-colors p-0.5"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {file.status === "error" && (
+                            <p className="text-red-400 text-[11px] mt-1.5 pl-1">{file.error}</p>
+                          )}
+
+                          {file.status === "ready" && (
+                            <div className="mt-2">
+                              <input
+                                value={file.description}
+                                onChange={(e) => updateAttachDesc(file.id, e.target.value)}
+                                placeholder="Mô tả file này dùng để làm gì (VD: Danh sách sản phẩm, FAQ, Chính sách...)"
+                                className="w-full bg-[#16161F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-lg px-3 py-1.5 text-white text-xs placeholder:text-[#5A5A7A] outline-none transition-all"
+                              />
+                              {file.isText && file.content && (
+                                <p className="text-[#5A5A7A] text-[10px] mt-1">
+                                  {file.content.length.toLocaleString()} ký tự · AI sẽ đọc và tham khảo nội dung này
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Info banner */}
+                  <div className="mt-4 flex items-start gap-2 bg-blue-500/5 border border-blue-500/15 rounded-xl p-3">
+                    <Database className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                      <p className="text-blue-400 font-medium mb-0.5">Cách hoạt động</p>
+                      <p className="text-[#A0A0B0] leading-relaxed">
+                        File text (TXT, CSV, JSON...) được đọc và tích hợp trực tiếp vào knowledge base của agent.
+                        Khi có người dùng chat, AI sẽ tự động tham khảo nội dung file để trả lời chính xác hơn.
+                        Bạn có thể test ngay bên phải →
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Demo greeting + suggestions */}
                 <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-5">
                   <div className="flex items-center gap-2 mb-1">
-                    <Send className="w-4 h-4 text-[#FF6B00]" />
+                    <MessageSquare className="w-4 h-4 text-[#FF6B00]" />
                     <h2 className="text-white font-semibold">Lời chào Demo</h2>
                   </div>
-                  <p className="text-[#A0A0B0] text-xs mb-3">Tin nhắn đầu tiên agent gửi khi mở demo. Nên thân thiện và giới thiệu rõ agent làm gì.</p>
+                  <p className="text-[#A0A0B0] text-xs mb-3">Tin nhắn đầu tiên agent gửi khi mở demo.</p>
                   <textarea value={form.demoGreeting} onChange={(e) => set("demoGreeting", e.target.value)}
                     placeholder="VD: Xin chào! Tôi là [Tên Agent] 👋 Tôi có thể giúp bạn [mô tả ngắn]. Bạn muốn bắt đầu với điều gì?"
                     rows={3} maxLength={400}
@@ -760,23 +1202,18 @@ export default function SellAgentPage() {
               </motion.div>
             )}
 
-            {/* ── Step 3 ─────────────────────────────────────────────────────── */}
+            {/* ── Step 3: Pricing & Bank ─────────────────────────────────── */}
             {step === 2 && (
               <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
-                {/* Pricing */}
                 <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-5">
                   <div className="flex items-center gap-2 mb-4">
                     <Tag className="w-4 h-4 text-[#FF6B00]" />
                     <h2 className="text-white font-semibold">Định giá Agent</h2>
                   </div>
-
                   <div className="grid sm:grid-cols-2 gap-4 mb-4">
                     <div>
-                      <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">
-                        Giá bán (₫) <span className="text-red-400">*</span>
-                      </label>
-                      <input type="number" value={form.price}
-                        onChange={(e) => set("price", e.target.value)}
+                      <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">Giá bán (₫) <span className="text-red-400">*</span></label>
+                      <input type="number" value={form.price} onChange={(e) => set("price", e.target.value)}
                         placeholder="VD: 299000" min={10000} step={1000}
                         className="w-full bg-[#0A0A0F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-xl px-4 py-2.5 text-white text-sm placeholder:text-[#5A5A7A] outline-none transition-all"
                       />
@@ -799,7 +1236,6 @@ export default function SellAgentPage() {
                     </div>
                   </div>
 
-                  {/* Revenue split */}
                   {priceNum >= 10000 && (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                       className="bg-[#0A0A0F] border border-[#2A2A3A] rounded-xl p-4"
@@ -807,13 +1243,13 @@ export default function SellAgentPage() {
                       <p className="text-[#A0A0B0] text-xs font-medium mb-3">Phân chia mỗi đơn:</p>
                       <div className="space-y-2 mb-3">
                         {[
-                          { label: "Giá bán",              value: `${fmt(priceNum)}₫`,   color: "text-white" },
-                          { label: "Bạn nhận (80%)",       value: `+${fmt(sellerEarns)}₫`, color: "text-green-400" },
-                          { label: "Phí platform MonetAI (20%)", value: `-${fmt(monetaiCut)}₫`,  color: "text-[#A0A0B0]" },
+                          { l: "Giá bán",                    v: `${fmt(priceNum)}₫`,    c: "text-white"      },
+                          { l: "Bạn nhận (80%)",             v: `+${fmt(sellerEarns)}₫`, c: "text-green-400" },
+                          { l: "Phí platform MonetAI (20%)", v: `-${fmt(monetaiCut)}₫`,  c: "text-[#A0A0B0]" },
                         ].map((r) => (
-                          <div key={r.label} className="flex justify-between text-sm">
-                            <span className="text-[#A0A0B0]">{r.label}</span>
-                            <span className={`font-semibold ${r.color}`}>{r.value}</span>
+                          <div key={r.l} className="flex justify-between text-sm">
+                            <span className="text-[#A0A0B0]">{r.l}</span>
+                            <span className={`font-semibold ${r.c}`}>{r.v}</span>
                           </div>
                         ))}
                       </div>
@@ -828,20 +1264,15 @@ export default function SellAgentPage() {
                   )}
                 </div>
 
-                {/* Bank info */}
                 <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-5">
                   <div className="flex items-center gap-2 mb-1">
                     <Banknote className="w-4 h-4 text-[#FF6B00]" />
                     <h2 className="text-white font-semibold">Tài khoản nhận tiền</h2>
                   </div>
-                  <p className="text-[#A0A0B0] text-xs mb-4">
-                    MonetAI chuyển 80% doanh thu về đây trong {PAYOUT_DAYS} sau mỗi giao dịch.
-                  </p>
+                  <p className="text-[#A0A0B0] text-xs mb-4">MonetAI chuyển 80% doanh thu về đây trong {PAYOUT_DAYS}.</p>
                   <div className="space-y-3">
                     <div>
-                      <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">
-                        Ngân hàng <span className="text-red-400">*</span>
-                      </label>
+                      <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">Ngân hàng <span className="text-red-400">*</span></label>
                       <select value={form.bankName} onChange={(e) => set("bankName", e.target.value)}
                         className="w-full bg-[#0A0A0F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-xl px-4 py-2.5 text-white text-sm outline-none transition-all appearance-none cursor-pointer"
                       >
@@ -850,21 +1281,15 @@ export default function SellAgentPage() {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">
-                        Số tài khoản <span className="text-red-400">*</span>
-                      </label>
-                      <input value={form.bankAccount}
-                        onChange={(e) => set("bankAccount", e.target.value.replace(/\D/g, ""))}
+                      <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">Số tài khoản <span className="text-red-400">*</span></label>
+                      <input value={form.bankAccount} onChange={(e) => set("bankAccount", e.target.value.replace(/\D/g, ""))}
                         placeholder="VD: 0971234567"
                         className="w-full bg-[#0A0A0F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-xl px-4 py-2.5 text-white text-sm placeholder:text-[#5A5A7A] outline-none transition-all font-mono"
                       />
                     </div>
                     <div>
-                      <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">
-                        Tên chủ tài khoản <span className="text-red-400">*</span>
-                      </label>
-                      <input value={form.bankHolder}
-                        onChange={(e) => set("bankHolder", e.target.value.toUpperCase())}
+                      <label className="block text-[#A0A0B0] text-xs font-medium mb-1.5">Tên chủ tài khoản <span className="text-red-400">*</span></label>
+                      <input value={form.bankHolder} onChange={(e) => set("bankHolder", e.target.value.toUpperCase())}
                         placeholder="VD: NGUYEN VAN A"
                         className="w-full bg-[#0A0A0F] border border-[#2A2A3A] focus:border-[#FF6B00] rounded-xl px-4 py-2.5 text-white text-sm placeholder:text-[#5A5A7A] outline-none transition-all font-mono tracking-wide"
                       />
@@ -873,13 +1298,13 @@ export default function SellAgentPage() {
                   </div>
                   <div className="mt-4 flex items-start gap-2 bg-[#FF6B00]/5 border border-[#FF6B00]/15 rounded-xl p-3">
                     <ShieldCheck className="w-4 h-4 text-[#FF6B00] shrink-0 mt-0.5" />
-                    <p className="text-[#A0A0B0] text-xs">Thông tin ngân hàng được mã hóa và bảo mật. MonetAI chỉ dùng để thanh toán hoa hồng.</p>
+                    <p className="text-[#A0A0B0] text-xs">Thông tin ngân hàng được mã hóa và bảo mật.</p>
                   </div>
                 </div>
               </motion.div>
             )}
 
-            {/* ── Step 4 ─────────────────────────────────────────────────────── */}
+            {/* ── Step 4: Review & Submit ───────────────────────────────── */}
             {step === 3 && (
               <motion.div initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
                 <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-5">
@@ -904,6 +1329,28 @@ export default function SellAgentPage() {
                       </div>
                     ))}
                   </div>
+
+                  {/* Attachments summary */}
+                  {form.attachments.filter((a) => a.status === "ready").length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-[#2A2A3A]">
+                      <p className="text-[#A0A0B0] text-xs font-medium mb-2 flex items-center gap-1.5">
+                        <Paperclip className="w-3 h-3" />
+                        {form.attachments.filter((a) => a.status === "ready").length} tài liệu đính kèm
+                      </p>
+                      <div className="space-y-1.5">
+                        {form.attachments.filter((a) => a.status === "ready").map((att) => (
+                          <div key={att.id} className="flex items-center gap-2 bg-[#0A0A0F] rounded-lg px-3 py-2">
+                            <FileTypeIcon ext={att.ext} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white text-xs truncate">{att.name}</p>
+                              <p className="text-[#5A5A7A] text-[10px]">{fmtSize(att.size)} · {att.description || "Không có mô tả"}</p>
+                            </div>
+                            {att.isText && <span className="text-green-400 text-[10px]">✓ Đã đọc</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Payout timeline */}
@@ -911,9 +1358,9 @@ export default function SellAgentPage() {
                   <h3 className="text-white font-semibold text-sm mb-4">Quy trình thanh toán</h3>
                   <div className="space-y-3">
                     {[
-                      { e: "🛒", t: "Khách mua agent", d: "Thanh toán qua VietQR → MonetAI nhận" },
-                      { e: "✅", t: "Xác nhận trong 24h", d: "MonetAI xác nhận giao dịch thành công" },
-                      { e: "💰", t: `Bạn nhận ${sellerEarns > 0 ? fmt(sellerEarns) + "₫" : "80%"}`, d: `Sau ${PAYOUT_DAYS}, chuyển về ${form.bankName || "tài khoản ngân hàng"} của bạn` },
+                      { e: "🛒", t: "Khách mua agent",          d: "Thanh toán VietQR → MonetAI nhận" },
+                      { e: "✅", t: "Xác nhận trong 24h",       d: "MonetAI xác nhận giao dịch" },
+                      { e: "💰", t: `Bạn nhận ${sellerEarns > 0 ? fmt(sellerEarns) + "₫" : "80%"}`, d: `Sau ${PAYOUT_DAYS}, chuyển về ${form.bankName || "tài khoản"} của bạn` },
                     ].map((r, i) => (
                       <div key={i} className="flex items-start gap-3">
                         <div className="w-8 h-8 rounded-xl bg-[#0A0A0F] border border-[#2A2A3A] flex items-center justify-center text-base shrink-0">{r.e}</div>
@@ -933,9 +1380,9 @@ export default function SellAgentPage() {
                     <p>1. Agent được MonetAI xét duyệt trong 1–3 ngày trước khi xuất hiện trên marketplace.</p>
                     <p>2. MonetAI giữ 20% phí platform. 80% thuộc về bạn.</p>
                     <p>3. Thanh toán sau {PAYOUT_DAYS} ngày làm việc kể từ ngày có giao dịch thành công.</p>
-                    <p>4. Agent phải hoạt động đúng như mô tả. MonetAI có quyền gỡ agent nếu nhận khiếu nại chính đáng.</p>
-                    <p>5. Bạn chịu trách nhiệm về nội dung agent. Không đăng agent vi phạm pháp luật Việt Nam.</p>
-                    <p>6. MonetAI có quyền chỉnh sửa mô tả để phù hợp tiêu chuẩn marketplace.</p>
+                    <p>4. Agent phải hoạt động đúng mô tả. MonetAI có quyền gỡ agent nếu nhận khiếu nại chính đáng.</p>
+                    <p>5. Tài liệu đính kèm không được chứa nội dung vi phạm pháp luật Việt Nam.</p>
+                    <p>6. Bạn chịu trách nhiệm về tính chính xác của tài liệu đính kèm.</p>
                     <p>7. Mọi tranh chấp do MonetAI làm trung gian và quyết định cuối cùng là của MonetAI.</p>
                   </div>
                   <label className="flex items-start gap-3 cursor-pointer group"
@@ -947,8 +1394,7 @@ export default function SellAgentPage() {
                       {form.agreedToTerms && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
                     </div>
                     <p className="text-sm text-[#A0A0B0] group-hover:text-white transition-colors select-none">
-                      Tôi đã đọc và đồng ý với{" "}
-                      <span className="text-[#FF6B00]">Điều khoản bán hàng</span> của MonetAI.
+                      Tôi đã đọc và đồng ý với <span className="text-[#FF6B00]">Điều khoản bán hàng</span> của MonetAI.
                     </p>
                   </label>
                 </div>
@@ -963,62 +1409,96 @@ export default function SellAgentPage() {
                   ><ArrowLeft className="w-4 h-4" /> Quay lại</button>
                 : <div />
               }
-
               {step < STEPS.length - 1
                 ? <motion.button type="button" onClick={nextStep} whileTap={{ scale: 0.97 }}
                     className="flex items-center gap-2 bg-[#FF6B00] hover:bg-[#E55A00] text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors"
                   >Tiếp theo <ArrowRight className="w-4 h-4" /></motion.button>
                 : <motion.button type="button" onClick={handleSubmit}
-                    disabled={loading || !form.agreedToTerms}
-                    whileTap={{ scale: 0.97 }}
+                    disabled={loading || !form.agreedToTerms} whileTap={{ scale: 0.97 }}
                     className="flex items-center gap-2 bg-[#FF6B00] hover:bg-[#E55A00] disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors"
                   >
-                    {loading
-                      ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      : <Upload className="w-4 h-4" />
-                    }
+                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                     {loading ? "Đang gửi..." : "Đăng bán Agent"}
                   </motion.button>
               }
             </div>
           </div>
 
-          {/* Right: preview + earnings calculator + tips */}
+          {/* ── Right column ────────────────────────────────────────────────── */}
           <div className="space-y-4">
-            <p className="text-[#A0A0B0] text-xs font-medium flex items-center gap-1.5">
-              <Eye className="w-3.5 h-3.5" /> Xem trước card
-            </p>
-            <PreviewCard f={form} />
+            {/* Right column tab switcher */}
+            <div className="flex gap-1 bg-[#16161F] border border-[#2A2A3A] rounded-xl p-1">
+              {(["preview", "test"] as const).map((t) => (
+                <button key={t} onClick={() => setRightTab(t)}
+                  className={`flex-1 text-xs py-1.5 rounded-lg transition-all font-medium flex items-center justify-center gap-1.5 ${
+                    rightTab === t ? "bg-[#FF6B00] text-white" : "text-[#A0A0B0] hover:text-white"
+                  }`}
+                >
+                  {t === "preview"
+                    ? <><Eye className="w-3 h-3" /> Xem trước</>
+                    : <><MessageSquare className="w-3 h-3" /> Test Agent</>
+                  }
+                </button>
+              ))}
+            </div>
 
-            {priceNum >= 10000 && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                className="bg-[#16161F] border border-green-500/20 rounded-2xl p-4"
-              >
-                <p className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-green-400" /> Dự tính thu nhập
-                </p>
-                <div className="space-y-2 text-xs">
-                  {[5, 10, 20, 50].map((n) => (
-                    <div key={n} className="flex justify-between">
-                      <span className="text-[#A0A0B0]">{n} đơn/{form.priceType}</span>
-                      <span className="text-green-400 font-semibold">+{fmt(sellerEarns * n)}₫</span>
+            {rightTab === "preview" && (
+              <>
+                <PreviewCard f={form} />
+                {priceNum >= 10000 && (
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                    className="bg-[#16161F] border border-green-500/20 rounded-2xl p-4"
+                  >
+                    <p className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-green-400" /> Dự tính thu nhập
+                    </p>
+                    <div className="space-y-2 text-xs">
+                      {[5, 10, 20, 50].map((n) => (
+                        <div key={n} className="flex justify-between">
+                          <span className="text-[#A0A0B0]">{n} đơn/{form.priceType}</span>
+                          <span className="text-green-400 font-semibold">+{fmt(sellerEarns * n)}₫</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  </motion.div>
+                )}
+                <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-4">
+                  <p className="text-[#A0A0B0] text-xs font-medium mb-2">💡 Mẹo để bán tốt</p>
+                  <ul className="space-y-1.5 text-xs text-[#5A5A7A]">
+                    <li>• Tagline nêu rõ lợi ích chính, ngắn gọn</li>
+                    <li>• Upload file knowledge base để agent trả lời chính xác hơn</li>
+                    <li>• System prompt càng chi tiết, AI càng chuẩn</li>
+                    <li>• Giá 99k–499k/tháng bán chạy nhất</li>
+                    <li>• Test agent trước khi submit → tab "Test Agent"</li>
+                  </ul>
                 </div>
-              </motion.div>
+              </>
             )}
 
-            <div className="bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-4">
-              <p className="text-[#A0A0B0] text-xs font-medium mb-2">💡 Mẹo để bán tốt</p>
-              <ul className="space-y-1.5 text-xs text-[#5A5A7A]">
-                <li>• Tagline nêu rõ lợi ích chính, ngắn gọn</li>
-                <li>• System prompt càng chi tiết, AI càng chuẩn</li>
-                <li>• Gợi ý demo hay → tăng tỉ lệ mua</li>
-                <li>• Giá 99k–499k/tháng bán chạy nhất</li>
-                <li>• Cập nhật agent để duy trì đánh giá cao</li>
-              </ul>
-            </div>
+            {rightTab === "test" && (
+              <>
+                {form.attachments.filter((a) => a.status === "ready" && a.isText).length > 0 && (
+                  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                    className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3 flex items-start gap-2"
+                  >
+                    <Database className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                    <p className="text-blue-400 text-xs">
+                      <strong>{form.attachments.filter((a) => a.status === "ready" && a.isText).length} file</strong> đã được tích hợp vào knowledge base.
+                      Agent sẽ tham khảo nội dung này khi trả lời.
+                    </p>
+                  </motion.div>
+                )}
+                <TestAgentChat form={form} />
+                <div className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-3">
+                  <p className="text-[#5A5A7A] text-[11px] leading-relaxed">
+                    <strong className="text-[#A0A0B0]">Lưu ý:</strong> Chat test sử dụng system prompt + file đính kèm hiện tại.
+                    Hội thoại này không được lưu.
+                  </p>
+                </div>
+              </>
+            )}
           </div>
+
         </div>
       )}
     </div>
