@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 export async function POST(req: NextRequest) {
   try {
     const { prompt, size = "1024x1024", quality = "standard" } = (await req.json()) as {
@@ -19,6 +17,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "OpenAI API chưa được cấu hình." }, { status: 503 });
     }
 
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const response = await openai.images.generate({
       model: "dall-e-3",
       prompt: `${prompt}. High quality, professional, suitable for business marketing.`,
