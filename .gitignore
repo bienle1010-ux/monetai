@@ -46,3 +46,6 @@ take_*.js
 
 # Claude internal
 .claude/
+
+.vercel
+.env*

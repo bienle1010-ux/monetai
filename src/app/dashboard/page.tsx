@@ -2,8 +2,77 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { TrendingUp, PenTool, Video, Bot, MessageSquare, Workflow, Store, GraduationCap, ArrowRight, DollarSign, Users, BarChart2, Zap } from "lucide-react";
+import { TrendingUp, PenTool, Video, Bot, MessageSquare, Workflow, Store, GraduationCap, ArrowRight, DollarSign, BarChart2, Zap } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+
+const PLATFORM_FOLDERS = [
+  {
+    id: "ai-affiliate",
+    label: "AI Affiliate",
+    href: "/dashboard/ai-affiliate",
+    icon: "🎯",
+    desc: "10 AI tools kiếm tiền Affiliate",
+    color: "#FF6B00",
+    gradient: "from-[#FF6B00]/20 to-transparent",
+    tools: ["Product Finder", "Campaign Planner", "Landing Page Builder", "Audience Finder"],
+    count: "10 tools",
+  },
+  {
+    id: "content-studio",
+    label: "AI Content Studio",
+    href: "/dashboard/content-studio",
+    icon: "✍️",
+    desc: "27 tools tạo nội dung & hình ảnh AI",
+    color: "#8B5CF6",
+    gradient: "from-[#8B5CF6]/20 to-transparent",
+    tools: ["Facebook Writer", "TikTok Script", "Image Generator", "SEO Writer"],
+    count: "27 tools",
+  },
+  {
+    id: "ai-marketplace",
+    label: "AI Marketplace",
+    href: "/dashboard/ai-marketplace",
+    icon: "🛍️",
+    desc: "Mua bán Prompt, Template, Workflow AI",
+    color: "#10B981",
+    gradient: "from-[#10B981]/20 to-transparent",
+    tools: ["Prompt Store", "Workflow Market", "Template Hub", "Digital Products"],
+    count: "18 danh mục",
+  },
+  {
+    id: "affiliate-network",
+    label: "Affiliate Network",
+    href: "/dashboard/affiliate-network",
+    icon: "🔗",
+    desc: "Quản lý mạng lưới Affiliate chuyên nghiệp",
+    color: "#3B82F6",
+    gradient: "from-[#3B82F6]/20 to-transparent",
+    tools: ["Smart Matching", "KPI Analyzer", "Fraud Detection", "Commission Engine"],
+    count: "16 tools",
+  },
+  {
+    id: "ai-agent-marketplace",
+    label: "AI Agent Marketplace",
+    href: "/dashboard/ai-agent-marketplace",
+    icon: "🤖",
+    desc: "Mua bán & tương tác 50+ AI Agents",
+    color: "#EC4899",
+    gradient: "from-[#EC4899]/20 to-transparent",
+    tools: ["Sales Agents", "Marketing Agents", "Business Agents", "E-commerce"],
+    count: "50+ agents",
+  },
+  {
+    id: "commerce-platform",
+    label: "AI Commerce Platform",
+    href: "/dashboard/commerce-platform",
+    icon: "🏗️",
+    desc: "Hệ điều hành doanh nghiệp AI toàn diện",
+    color: "#F59E0B",
+    gradient: "from-[#F59E0B]/20 to-transparent",
+    tools: ["AI CRM", "Business OS", "Analytics", "Workflow Automation"],
+    count: "16 modules",
+  },
+];
 
 const quickLinks = [
   { label: "AI Content", href: "/dashboard/content-generator", icon: PenTool, color: "#3B82F6" },
@@ -45,6 +114,74 @@ export default function DashboardPage() {
           Chào mừng, {user?.name?.split(" ").pop()}! 👋
         </h1>
         <p className="text-[#A0A0B0]">Bắt đầu kiếm tiền với AI ngay hôm nay.</p>
+      </motion.div>
+
+      {/* ── 6 Platform Folders ── */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.05 }}
+        className="mb-8"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-white font-semibold">🚀 Nền tảng AI Commerce</h2>
+          <span className="text-xs text-[#A0A0B0]">6 hệ thống · 100+ tools</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {PLATFORM_FOLDERS.map((folder, i) => (
+            <motion.div
+              key={folder.id}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.1 + i * 0.08 }}
+            >
+              <Link href={folder.href}>
+                <motion.div
+                  whileHover={{ y: -3, borderColor: `${folder.color}50` }}
+                  whileTap={{ scale: 0.98 }}
+                  className={`relative bg-gradient-to-br ${folder.gradient} bg-[#16161F] border border-[#2A2A3A] rounded-2xl p-5 cursor-pointer transition-all duration-300 overflow-hidden group`}
+                  style={{ background: "#16161F" }}
+                >
+                  <div
+                    className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                    style={{ background: `linear-gradient(135deg, ${folder.color}08 0%, transparent 60%)` }}
+                  />
+                  <div className="relative">
+                    <div className="flex items-start justify-between mb-3">
+                      <div
+                        className="w-11 h-11 rounded-xl flex items-center justify-center text-2xl"
+                        style={{ background: `${folder.color}15` }}
+                      >
+                        {folder.icon}
+                      </div>
+                      <span
+                        className="text-xs font-semibold px-2 py-1 rounded-lg"
+                        style={{ background: `${folder.color}15`, color: folder.color }}
+                      >
+                        {folder.count}
+                      </span>
+                    </div>
+                    <h3 className="font-bold text-white text-sm mb-1 group-hover:text-white">{folder.label}</h3>
+                    <p className="text-[#A0A0B0] text-xs mb-3 leading-relaxed">{folder.desc}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {folder.tools.slice(0, 3).map((t) => (
+                        <span key={t} className="text-[10px] px-2 py-0.5 rounded-full border border-[#2A2A3A] text-[#6B6B7B]">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1 mt-3">
+                      <span className="text-xs font-semibold transition-colors" style={{ color: folder.color }}>
+                        Mở ngay
+                      </span>
+                      <ArrowRight className="w-3 h-3 transition-transform group-hover:translate-x-0.5" style={{ color: folder.color }} />
+                    </div>
+                  </div>
+                </motion.div>
+              </Link>
+            </motion.div>
+          ))}
+        </div>
       </motion.div>
 
       {/* Stats */}
