@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || "");
+// maxDuration allows up to 60s (requires Vercel Pro) — falls back to 10s on hobby
+export const maxDuration = 60;
 
 // ─── Tool system prompts ────────────────────────────────────────────────────
 const TOOL_PROMPTS: Record<string, string> = {
@@ -72,10 +73,10 @@ const TOOL_PROMPTS: Record<string, string> = {
 };
 
 function buildUserMessage(inputs: Record<string, string>): string {
-  return Object.entries(inputs)
+  const parts = Object.entries(inputs)
     .filter(([, v]) => v && v.trim())
-    .map(([k, v]) => `${k}: ${v}`)
-    .join("\n");
+    .map(([k, v]) => `${k}: ${v}`);
+  return parts.length > 0 ? parts.join("\n") : "Hãy thực hiện nhiệm vụ được mô tả trong system prompt.";
 }
 
 export async function POST(req: NextRequest) {
@@ -90,13 +91,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Tool không tồn tại." }, { status: 400 });
     }
 
-    if (!process.env.GOOGLE_AI_API_KEY) {
+    const apiKey = process.env.GOOGLE_AI_API_KEY;
+    if (!apiKey) {
       return NextResponse.json({ error: "AI API chưa được cấu hình." }, { status: 503 });
     }
 
+    // Initialize inside handler to always pick up the latest env var
+    const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash",
       systemInstruction: systemPrompt,
+      generationConfig: {
+        maxOutputTokens: 2048,
+        temperature: 0.8,
+      },
     });
 
     const result = await model.generateContent(buildUserMessage(inputs));
@@ -104,7 +112,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ result: text });
   } catch (err) {
-    console.error("Tools API error:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("Tools API error:", message);
+    if (message.includes("API key")) {
+      return NextResponse.json({ error: "API key không hợp lệ. Vui lòng kiểm tra cấu hình." }, { status: 503 });
+    }
+    if (message.includes("quota") || message.includes("rate")) {
+      return NextResponse.json({ error: "Đã đạt giới hạn API. Vui lòng thử lại sau ít phút." }, { status: 429 });
+    }
     return NextResponse.json({ error: "Có lỗi xảy ra. Vui lòng thử lại." }, { status: 500 });
   }
 }
