@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { LayoutDashboard, TrendingUp, Users, LogOut, Menu, X, Shield } from "lucide-react";
+import { LayoutDashboard, TrendingUp, Users, LogOut, Menu, Shield, FileText } from "lucide-react";
 
 const navItems = [
-  { label: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
-  { label: "Affiliate Products", href: "/admin/affiliate", icon: TrendingUp },
-  { label: "Người dùng", href: "/admin/users", icon: Users },
+  { label: "Dashboard",       href: "/admin/dashboard", icon: LayoutDashboard },
+  { label: "Nội dung trang",  href: "/admin/content",   icon: FileText },
+  { label: "Người dùng",      href: "/admin/users",     icon: Users },
+  { label: "Affiliate",       href: "/admin/affiliate", icon: TrendingUp },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
