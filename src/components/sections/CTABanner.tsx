@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight, Play } from "lucide-react";
+import { useContent } from "@/contexts/ContentContext";
 
 export default function CTABanner() {
+  const { config } = useContent();
   return (
     <section className="py-20 md:py-28 bg-[#0A0A0F] relative overflow-hidden">
       <div className="absolute inset-0 pointer-events-none">
@@ -20,32 +22,21 @@ export default function CTABanner() {
           transition={{ duration: 0.6 }}
         >
           <h2 className="text-3xl md:text-5xl font-bold text-white mb-6 leading-tight">
-            Bắt đầu kiếm tiền với AI<br />
             <span className="bg-gradient-to-r from-[#FF6B00] to-[#FF8C3A] bg-clip-text text-transparent">
-              ngay hôm nay
+              {config.cta.title}
             </span>
           </h2>
-          <p className="text-[#A0A0B0] text-lg mb-10 max-w-xl mx-auto">
-            Tham gia cùng hàng nghìn người đang kiếm thu nhập từ AI. Miễn phí để bắt đầu, không cần thẻ tín dụng.
-          </p>
+          <p className="text-[#A0A0B0] text-lg mb-10 max-w-xl mx-auto">{config.cta.subtitle}</p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={{ type: "spring", stiffness: 400, damping: 17 }}>
-              <Link
-                href="/register"
-                className="inline-flex items-center gap-2 bg-[#FF6B00] hover:bg-[#E55A00] text-white font-bold px-8 py-4 rounded-xl text-base transition-colors"
-              >
-                Đăng ký miễn phí
-                <ArrowRight className="w-5 h-5" />
+              <Link href="/register" className="inline-flex items-center gap-2 bg-[#FF6B00] hover:bg-[#E55A00] text-white font-bold px-8 py-4 rounded-xl text-base transition-colors">
+                {config.cta.btn1}<ArrowRight className="w-5 h-5" />
               </Link>
             </motion.div>
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} transition={{ type: "spring", stiffness: 400, damping: 17 }}>
-              <Link
-                href="/#services"
-                className="inline-flex items-center gap-2 border border-white/20 text-white hover:bg-white/5 font-semibold px-8 py-4 rounded-xl text-base transition-colors"
-              >
-                <Play className="w-4 h-4" />
-                Xem demo
+              <Link href="/#services" className="inline-flex items-center gap-2 border border-white/20 text-white hover:bg-white/5 font-semibold px-8 py-4 rounded-xl text-base transition-colors">
+                <Play className="w-4 h-4" />{config.cta.btn2}
               </Link>
             </motion.div>
           </div>

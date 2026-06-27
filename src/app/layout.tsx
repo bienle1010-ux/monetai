@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ContentProvider } from "@/contexts/ContentContext";
 
 export const metadata: Metadata = {
   title: "MonetAI — Earn More With AI",
@@ -20,7 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="vi" className="scroll-smooth">
       <body>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider><ContentProvider>{children}</ContentProvider></AuthProvider>
       </body>
     </html>
   );

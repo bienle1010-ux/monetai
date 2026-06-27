@@ -1,24 +1,19 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Zap, Search, Facebook, Smartphone, Target, Globe, BarChart2, Megaphone, ShoppingBag, Wallet, Users, PieChart } from "lucide-react";
+import * as LucideIcons from "lucide-react";
+import { useContent } from "@/contexts/ContentContext";
 
-const features = [
-  { icon: Zap, title: "Một chạm tạo nội dung Affiliate" },
-  { icon: Search, title: "Tự động nghiên cứu sản phẩm" },
-  { icon: Facebook, title: "AI tạo bài Facebook" },
-  { icon: Smartphone, title: "AI tạo video TikTok" },
-  { icon: Target, title: "AI tạo CTA bán hàng" },
-  { icon: Globe, title: "AI tối ưu SEO" },
-  { icon: BarChart2, title: "Theo dõi doanh thu Affiliate" },
-  { icon: Megaphone, title: "Quản lý chiến dịch Marketing" },
-  { icon: ShoppingBag, title: "Marketplace AI lớn nhất VN" },
-  { icon: Wallet, title: "Thanh toán hoa hồng tự động" },
-  { icon: Users, title: "Hệ thống đa AI Agent" },
-  { icon: PieChart, title: "Dashboard phân tích doanh thu" },
-];
+type LucideIconName = keyof typeof LucideIcons;
+
+function DynamicIcon({ name, className }: { name: string; className?: string }) {
+  const Icon = (LucideIcons[name as LucideIconName] ?? LucideIcons.Zap) as React.ComponentType<{ className?: string }>;
+  return <Icon className={className} />;
+}
 
 export default function KeyFeatures() {
+  const { features, config } = useContent();
+
   return (
     <section className="py-20 md:py-28 bg-[#111118]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -33,17 +28,17 @@ export default function KeyFeatures() {
             Tính năng
           </span>
           <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
-            Tại sao chọn MonetAI?
+            {config.featuresTitle}
           </h2>
           <p className="text-[#A0A0B0] text-lg max-w-2xl mx-auto">
-            12 tính năng AI mạnh mẽ giúp bạn kiếm tiền nhanh hơn, thông minh hơn mà không cần kỹ năng kỹ thuật.
+            {features.length} tính năng AI mạnh mẽ giúp bạn kiếm tiền nhanh hơn, thông minh hơn mà không cần kỹ năng kỹ thuật.
           </p>
         </motion.div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {features.map((f, i) => (
             <motion.div
-              key={f.title}
+              key={f.id}
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true, margin: "-40px" }}
@@ -52,7 +47,7 @@ export default function KeyFeatures() {
               className="flex items-center gap-4 bg-[#16161F] border border-[#2A2A3A] rounded-xl p-4 cursor-default transition-all"
             >
               <div className="w-10 h-10 rounded-xl bg-[#FF6B00]/10 flex items-center justify-center shrink-0">
-                <f.icon className="w-5 h-5 text-[#FF6B00]" />
+                <DynamicIcon name={f.icon} className="w-5 h-5 text-[#FF6B00]" />
               </div>
               <p className="text-white text-sm font-medium leading-snug">{f.title}</p>
             </motion.div>

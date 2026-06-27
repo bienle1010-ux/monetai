@@ -2,9 +2,10 @@
 
 import { motion } from "framer-motion";
 import { Star } from "lucide-react";
-import { testimonials } from "@/data/testimonials";
+import { useContent } from "@/contexts/ContentContext";
 
 export default function Testimonials() {
+  const { testimonials, config } = useContent();
   return (
     <section className="py-20 md:py-28 bg-[#111118]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -18,9 +19,7 @@ export default function Testimonials() {
           <span className="inline-block text-xs font-semibold uppercase tracking-widest text-[#FF6B00] mb-4 bg-[#FF6B00]/10 px-3 py-1.5 rounded-full">
             Đánh giá
           </span>
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
-            Khách hàng nói về MonetAI
-          </h2>
+          <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">{config.testimonialsTitle}</h2>
           <p className="text-[#A0A0B0] text-lg max-w-2xl mx-auto">
             Hàng nghìn người đã thay đổi thu nhập nhờ MonetAI. Đây là câu chuyện của họ.
           </p>

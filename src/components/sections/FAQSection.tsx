@@ -3,9 +3,10 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown } from "lucide-react";
-import { faqs } from "@/data/faq";
+import { useContent } from "@/contexts/ContentContext";
 
 export default function FAQSection() {
+  const { faqs, config } = useContent();
   const [open, setOpen] = useState<number | null>(0);
 
   return (
@@ -21,15 +22,13 @@ export default function FAQSection() {
           <span className="inline-block text-xs font-semibold uppercase tracking-widest text-[#FF6B00] mb-4 bg-[#FF6B00]/10 px-3 py-1.5 rounded-full">
             FAQ
           </span>
-          <h2 className="text-3xl md:text-4xl font-bold text-[#1A1A2E] mb-4">
-            Câu hỏi thường gặp
-          </h2>
+          <h2 className="text-3xl md:text-4xl font-bold text-[#1A1A2E] mb-4">Câu hỏi thường gặp</h2>
         </motion.div>
 
         <div className="space-y-3">
           {faqs.map((faq, i) => (
             <motion.div
-              key={i}
+              key={faq.id ?? i}
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
