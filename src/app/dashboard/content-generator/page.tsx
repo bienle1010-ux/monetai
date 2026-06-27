@@ -7,7 +7,7 @@ import {
   Smartphone, Globe, Zap, ChevronRight,
 } from "lucide-react";
 import Link from "next/link";
-import { useAuth, UNLIMITED_CREDITS, ADMIN_EMAIL } from "@/contexts/AuthContext";
+import { useAuth, ADMIN_CREDITS, ADMIN_EMAIL } from "@/contexts/AuthContext";
 
 const contentTypes = [
   { id: "facebook", label: "Bài Facebook",      icon: Facebook,   color: "#1877F2", placeholder: "VD: Khóa học kiếm tiền online với AI" },
@@ -62,7 +62,7 @@ export default function ContentGeneratorPage() {
 
   const isAdmin     = user?.email === ADMIN_EMAIL;
   const credits     = user?.credits ?? 0;
-  const isUnlimited = isAdmin || credits === UNLIMITED_CREDITS;
+  const isUnlimited = isAdmin || credits === ADMIN_CREDITS;
   const hasCredits  = isUnlimited || credits > 0;
   const canGen      = !!product.trim() && !loading && hasCredits;
 

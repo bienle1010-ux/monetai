@@ -25,14 +25,13 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const STORAGE_KEY   = "monetai_user";
 const USERS_KEY     = "monetai_users";
-export const ADMIN_EMAIL     = "monetai.vn@gmail.com";
-// credits === -1 means unlimited (admin / enterprise)
-export const UNLIMITED_CREDITS = -1;
+export const ADMIN_EMAIL       = "monetai.vn@gmail.com";
+export const ADMIN_CREDITS     = 10_000_000;   // 10 triệu credits cho tài khoản admin
 
 // Ensure the admin user always carries max privileges regardless of what was stored
 function normalizeUser(u: User): User {
   if (u.email === ADMIN_EMAIL) {
-    return { ...u, plan: "enterprise", credits: UNLIMITED_CREDITS };
+    return { ...u, plan: "enterprise", credits: ADMIN_CREDITS };
   }
   return u;
 }
@@ -100,7 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         name: "Admin MonetAI",
         email: ADMIN_EMAIL,
         plan: "enterprise",
-        credits: UNLIMITED_CREDITS,
+        credits: ADMIN_CREDITS,
         joinedAt: new Date().toISOString(),
       };
       setUser(adminUser);
@@ -145,7 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       plan: isAdmin ? "enterprise" : "creator",
       joinedAt: new Date().toISOString(),
-      credits: isAdmin ? UNLIMITED_CREDITS : 5,
+      credits: isAdmin ? ADMIN_CREDITS : 5,
     };
     users.push(newUser);
     localStorage.setItem(USERS_KEY, JSON.stringify(users));

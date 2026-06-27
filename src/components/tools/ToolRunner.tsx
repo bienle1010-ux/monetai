@@ -51,9 +51,20 @@ export default function ToolRunner({ toolId, title, description, icon, fields, s
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   function handleChange(name: string, value: string) {
     setValues((prev) => ({ ...prev, [name]: value }));
+  }
+
+  async function callAPI(): Promise<{ result?: string; error?: string; status: number }> {
+    const res = await fetch(apiEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ toolId, inputs: values }),
+    });
+    const data = await res.json() as { result?: string; error?: string };
+    return { ...data, status: res.status };
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -61,20 +72,38 @@ export default function ToolRunner({ toolId, title, description, icon, fields, s
     setStatus("loading");
     setResult("");
     setError("");
-    try {
-      const res = await fetch(apiEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ toolId, inputs: values }),
-      });
-      const data = await res.json() as { result?: string; error?: string };
-      if (data.error) { setError(data.error); setStatus("error"); return; }
-      setResult(data.result ?? "");
-      setStatus("done");
-    } catch {
-      setError("Không thể kết nối. Vui lòng thử lại.");
-      setStatus("error");
+    setRetryCount(0);
+
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = [3000, 6000, 10000]; // ms
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const data = await callAPI();
+        if (data.status === 429 && attempt < MAX_RETRIES) {
+          // Rate limited — auto-retry after delay
+          setRetryCount(attempt + 1);
+          await new Promise((r) => setTimeout(r, RETRY_DELAY[attempt]));
+          continue;
+        }
+        if (data.error) { setError(data.error); setStatus("error"); return; }
+        setResult(data.result ?? "");
+        setStatus("done");
+        setRetryCount(0);
+        return;
+      } catch {
+        if (attempt < MAX_RETRIES) {
+          setRetryCount(attempt + 1);
+          await new Promise((r) => setTimeout(r, RETRY_DELAY[attempt]));
+          continue;
+        }
+        setError("Không thể kết nối. Vui lòng thử lại.");
+        setStatus("error");
+        return;
+      }
     }
+    setError("Hệ thống AI đang quá tải. Vui lòng thử lại sau 1 phút.");
+    setStatus("error");
   }
 
   async function copy() {
@@ -157,7 +186,7 @@ export default function ToolRunner({ toolId, title, description, icon, fields, s
             style={{ background: ORANGE, color: "#fff" }}
           >
             {status === "loading" ? (
-              <><RefreshCw className="w-4 h-4 animate-spin" /> Đang tạo...</>
+              <><RefreshCw className="w-4 h-4 animate-spin" /> {retryCount > 0 ? `Thử lại lần ${retryCount}...` : "Đang tạo..."}</>
             ) : (
               <><Send className="w-4 h-4" /> {submitLabel}</>
             )}
@@ -194,7 +223,9 @@ export default function ToolRunner({ toolId, title, description, icon, fields, s
                 <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="h-full flex items-center justify-center">
                   <div className="text-center">
                     <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin" style={{ color: ORANGE }} />
-                    <p className="text-sm" style={{ color: MUTED }}>AI đang tạo nội dung...</p>
+                    <p className="text-sm" style={{ color: MUTED }}>
+                      {retryCount > 0 ? `Đang tự thử lại (${retryCount}/3)...` : "AI đang tạo nội dung..."}
+                    </p>
                   </div>
                 </motion.div>
               )}

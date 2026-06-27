@@ -6,7 +6,7 @@ import {
   CreditCard, Check, Zap, QrCode, Copy, CheckCircle2,
   RefreshCw, X, Clock, ArrowDownCircle, ChevronDown, ChevronUp,
 } from "lucide-react";
-import { useAuth, UNLIMITED_CREDITS, ADMIN_EMAIL } from "@/contexts/AuthContext";
+import { useAuth, ADMIN_CREDITS, ADMIN_EMAIL } from "@/contexts/AuthContext";
 import { plans } from "@/data/pricing";
 
 const MB_ACCOUNT  = "0971166299";
@@ -60,7 +60,7 @@ export default function BillingPage() {
   const baseCreditsRef = useRef<number>(0);
 
   const isAdmin     = user?.email === ADMIN_EMAIL;
-  const isUnlimited = isAdmin || user?.credits === UNLIMITED_CREDITS;
+  const isUnlimited = isAdmin || user?.credits === ADMIN_CREDITS;
   const credits     = user?.credits ?? 0;
 
   // ── Auto-sync on mount ───────────────────────────────────────────────────

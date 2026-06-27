@@ -201,7 +201,9 @@ export default function DashboardPage() {
               {s.change && <span className="text-green-400 text-xs font-medium">{s.change}</span>}
             </div>
             <p className="text-2xl font-bold text-white">
-              {s.dynamic === "credits" ? user?.credits ?? 0 : s.value}
+              {s.dynamic === "credits"
+                ? (user?.credits ?? 0).toLocaleString("vi-VN")
+                : s.value}
             </p>
             <p className="text-[#A0A0B0] text-xs mt-0.5">{s.label}</p>
           </motion.div>

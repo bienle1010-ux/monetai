@@ -8,7 +8,7 @@ import {
   Send, Sparkles, ChevronRight, Zap, Users, Package,
   MessageSquare, Plus, ArrowRight,
 } from "lucide-react";
-import { useAuth, UNLIMITED_CREDITS, ADMIN_EMAIL } from "@/contexts/AuthContext";
+import { useAuth, ADMIN_CREDITS, ADMIN_EMAIL } from "@/contexts/AuthContext";
 import { agents, AGENT_CATEGORIES, type AgentData } from "@/data/agents";
 import type { ChatMessage } from "@/app/api/agent/chat/route";
 
@@ -468,7 +468,7 @@ export default function AgentMarketplacePage() {
   const [buyAgent, setBuyAgent]         = useState<AgentData | null>(null);
 
   const isAdmin     = user?.email === ADMIN_EMAIL;
-  const isUnlimited = isAdmin || user?.credits === UNLIMITED_CREDITS;
+  const isUnlimited = isAdmin || user?.credits === ADMIN_CREDITS;
 
   const filtered = agents.filter((a) => {
     const matchCat    = activeCategory === "Tất cả" || a.category === activeCategory;
